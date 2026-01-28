@@ -177,7 +177,7 @@ class Product:
         conn = get_db()
         try:
             cur = dict_cursor(conn)
-            cur.execute("SELECT * FROM products WHERE m_number = ?", (m_number,))
+            cur.execute("SELECT * FROM products WHERE m_number = %s", (m_number,))
             row = cur.fetchone()
             return Product._ensure_ean_string(dict(row)) if row else None
         finally:
@@ -199,12 +199,13 @@ class Product:
         conn = get_db()
         try:
             cur = conn.cursor()
+            # Use %s for both PostgreSQL and SQLite (psycopg2 and sqlite3 both support it)
             cur.execute("""
                 INSERT INTO products (m_number, description, size, color, layout_mode, 
                     icon_files, text_line_1, text_line_2, text_line_3, orientation,
                     font, material, mounting_type, ean, qa_status, icon_scale, text_scale,
                     icon_offset_x, icon_offset_y)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 data.get('m_number'), data.get('description'), data.get('size'),
                 data.get('color'), data.get('layout_mode', 'A'), data.get('icon_files'),
@@ -215,7 +216,8 @@ class Product:
                 data.get('icon_scale', 1.0), data.get('text_scale', 1.0),
                 data.get('icon_offset_x', 0.0), data.get('icon_offset_y', 0.0)
             ))
-            conn.commit()
+            if not DATABASE_URL.startswith("postgres"):
+                conn.commit()  # Only needed for SQLite (PostgreSQL has autocommit)
         finally:
             release_db(conn)
     
@@ -247,8 +249,9 @@ class Product:
         conn = get_db()
         try:
             cur = conn.cursor()
-            cur.execute("DELETE FROM products WHERE m_number = ?", (m_number,))
-            conn.commit()
+            cur.execute("DELETE FROM products WHERE m_number = %s", (m_number,))
+            if not DATABASE_URL.startswith("postgres"):
+                conn.commit()  # Only needed for SQLite (PostgreSQL has autocommit)
         finally:
             release_db(conn)
     
