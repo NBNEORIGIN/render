@@ -2997,6 +2997,8 @@ def preview_product(m_number):
     
     try:
         from image_generator import generate_product_image_preview
+        import logging
+        logging.info(f"Generating preview for {m_number} with icon: {product.get('icon_files', 'none')}")
         # Use low-res preview for thumbnails (scale=1 instead of scale=4)
         png_bytes = generate_product_image_preview(product)
         
@@ -3010,6 +3012,10 @@ def preview_product(m_number):
         
         return Response(png_bytes, mimetype='image/png')
     except Exception as e:
+        import logging
+        import traceback
+        logging.error(f"Preview generation failed for {m_number}: {e}")
+        logging.error(traceback.format_exc())
         # Fallback to placeholder SVG on error
         svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200" viewBox="0 0 300 200">
             <rect width="300" height="200" fill="#f8d7da"/>
