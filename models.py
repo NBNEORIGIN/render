@@ -230,17 +230,21 @@ class Product:
             values = []
             for key, value in data.items():
                 if value is not None:
-                    fields.append(f"{key} = ?")
+                    fields.append(f"{key} = %s")
                     values.append(value)
             
             if not fields:
                 # Nothing to update
                 return
             
+            # Add updated_at timestamp
+            fields.append("updated_at = CURRENT_TIMESTAMP")
+            
+            sql = f"UPDATE products SET {', '.join(fields)} WHERE m_number = %s"
             values.append(m_number)
-            sql = f"UPDATE products SET {', '.join(fields)}, updated_at = CURRENT_TIMESTAMP WHERE m_number = ?"
-            cur.execute(sql, values)
-            conn.commit()
+            cur.execute(sql, tuple(values))
+            if not DATABASE_URL.startswith("postgres"):
+                conn.commit()  # Only needed for SQLite (PostgreSQL has autocommit)
         finally:
             release_db(conn)
     
