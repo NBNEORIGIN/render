@@ -2983,6 +2983,13 @@ def upload_icon():
 # Simple in-memory cache for preview images
 _preview_cache = {}
 
+@app.route('/api/preview/clear-cache', methods=['POST'])
+def clear_preview_cache():
+    """Clear the preview image cache."""
+    global _preview_cache
+    _preview_cache = {}
+    return jsonify({"success": True, "message": "Preview cache cleared"})
+
 @app.route('/api/preview/<m_number>')
 def preview_product(m_number):
     """Generate PNG preview for a product."""
