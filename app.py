@@ -1163,7 +1163,7 @@ HTML_TEMPLATE = '''
             
             try {
                 const text = await file.text();
-                const lines = text.trim().split('\\n');
+                const lines = text.trim().split(/\r?\n/);
                 const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
                 
                 let imported = 0;
