@@ -2990,6 +2990,27 @@ def clear_preview_cache():
     _preview_cache = {}
     return jsonify({"success": True, "message": "Preview cache cleared"})
 
+@app.route('/api/debug/icons')
+def debug_icons():
+    """Debug endpoint to check icons directory."""
+    from pathlib import Path
+    icons_dir = Path(__file__).parent / "icons"
+    
+    result = {
+        "icons_dir": str(icons_dir),
+        "exists": icons_dir.exists(),
+        "is_dir": icons_dir.is_dir() if icons_dir.exists() else False,
+        "files": []
+    }
+    
+    if icons_dir.exists() and icons_dir.is_dir():
+        try:
+            result["files"] = [f.name for f in icons_dir.iterdir()]
+        except Exception as e:
+            result["error"] = str(e)
+    
+    return jsonify(result)
+
 @app.route('/api/preview/<m_number>')
 def preview_product(m_number):
     """Generate PNG preview for a product."""
