@@ -311,15 +311,25 @@ def _load_icon(icon_filename: str) -> tuple[str, any]:
     
     suffix = icon_path.suffix.lower()
     
-    if suffix == ".svg":
-        tree = etree.parse(str(icon_path))
-        return "svg", tree.getroot()
-    elif suffix == ".png":
-        with open(icon_path, "rb") as f:
-            data = f.read()
-        b64 = base64.b64encode(data).decode("ascii")
-        img = Image.open(icon_path)
-        return "png", (b64, img.width, img.height, "image/png")
+    try:
+        if suffix == ".svg":
+            logging.info(f"Parsing SVG icon: {icon_path}")
+            tree = etree.parse(str(icon_path))
+            logging.info(f"Successfully parsed SVG icon: {icon_filename}")
+            return "svg", tree.getroot()
+        elif suffix == ".png":
+            logging.info(f"Loading PNG icon: {icon_path}")
+            with open(icon_path, "rb") as f:
+                data = f.read()
+            b64 = base64.b64encode(data).decode("ascii")
+            img = Image.open(icon_path)
+            logging.info(f"Successfully loaded PNG icon: {icon_filename}")
+            return "png", (b64, img.width, img.height, "image/png")
+    except Exception as e:
+        logging.error(f"Failed to parse icon {icon_filename}: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
+        return None, None
     
     return None, None
 
