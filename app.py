@@ -5,6 +5,7 @@ from pathlib import Path
 from datetime import datetime
 
 from flask import Flask, render_template_string, jsonify, request, Response, send_file
+from flask_compress import Compress
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -16,6 +17,9 @@ from jobs import submit_job, get_job, get_all_jobs, job_to_dict, start_workers
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
+
+# Enable gzip compression for all responses
+Compress(app)
 
 # Initialize database on startup
 init_db()
@@ -2070,7 +2074,7 @@ Use Cases: ${useCases}
             }
         }
         
-        async function generateAmazonContent() {
+        async function generateAmazonContent(skipAI = false) {
             const btn = document.getElementById('btn-generate-amazon');
             const status = document.getElementById('amazon-status');
             const progressDiv = document.getElementById('generation-progress');
@@ -2110,34 +2114,41 @@ Use Cases: ${useCases}
                     throw new Error(imgData.error || 'Image generation failed');
                 }
                 
-                // Step 2: Generate AI content (with 2 minute timeout)
-                genLog('Step 2: Generating AI content (may take up to 2 minutes)...');
-                progressDetails.innerHTML += '🤖 Generating AI content (may take up to 2 minutes)...<br>';
-                startProgress('Waiting for AI response');
+                let contentData = {content: ''};
                 
-                const contentController = new AbortController();
-                const contentTimeout = setTimeout(() => contentController.abort(), 120000);
-                
-                const contentResp = await fetch('/api/generate/content', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        theme,
-                        use_cases: useCases,
-                        system_prompt: systemPrompt,
-                        sample_m_numbers: sampleMNumbers
-                    }),
-                    signal: contentController.signal
-                });
-                clearTimeout(contentTimeout);
-                
-                const contentData = await contentResp.json();
-                
-                if (contentData.success) {
-                    genLog('AI content generated', 'success');
-                    progressDetails.innerHTML += '✅ AI content generated<br>';
+                // Step 2: Generate AI content (optional - can be skipped for faster processing)
+                if (!skipAI) {
+                    genLog('Step 2: Generating AI content (may take up to 2 minutes)...');
+                    progressDetails.innerHTML += '🤖 Generating AI content (may take up to 2 minutes)...<br>';
+                    startProgress('Waiting for AI response');
+                    
+                    const contentController = new AbortController();
+                    const contentTimeout = setTimeout(() => contentController.abort(), 120000);
+                    
+                    const contentResp = await fetch('/api/generate/content', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            theme,
+                            use_cases: useCases,
+                            system_prompt: systemPrompt,
+                            sample_m_numbers: sampleMNumbers
+                        }),
+                        signal: contentController.signal
+                    });
+                    clearTimeout(contentTimeout);
+                    
+                    contentData = await contentResp.json();
+                    
+                    if (contentData.success) {
+                        genLog('AI content generated', 'success');
+                        progressDetails.innerHTML += '✅ AI content generated<br>';
+                    } else {
+                        throw new Error(contentData.error || 'Content generation failed');
+                    }
                 } else {
-                    throw new Error(contentData.error || 'Content generation failed');
+                    genLog('Step 2: Skipping AI content (using defaults for faster generation)', 'success');
+                    progressDetails.innerHTML += '⚡ Skipping AI content (using defaults)<br>';
                 }
                 
                 // Step 3: Generate Amazon flatfile
@@ -2151,7 +2162,7 @@ Use Cases: ${useCases}
                     body: JSON.stringify({
                         theme,
                         use_cases: useCases,
-                        ai_content: contentData.content
+                        ai_content: contentData.content || ''
                     })
                 });
                 
@@ -3452,12 +3463,21 @@ def generate_content():
         # Build message content with images for GPT-4 Vision
         content = []
         
-        # Add sample images
-        for m_number in sample_m_numbers[:5]:  # Limit to 5 images
+        # Add sample images (use cached previews if available, otherwise generate)
+        for m_number in sample_m_numbers[:3]:  # Reduced from 5 to 3 for faster processing
             product = Product.get(m_number)
             if product:
                 try:
-                    png_bytes = generate_product_image(product, "main")
+                    # Try to use cached preview first (scale=1), fall back to full generation
+                    cache_key = f"{m_number}_{product.get('icon_files', '')}_{product.get('updated_at', '')}"
+                    if cache_key in _preview_cache:
+                        png_bytes = _preview_cache[cache_key]
+                        logging.info(f"Using cached preview for {m_number}")
+                    else:
+                        from image_generator import generate_product_image_preview
+                        png_bytes = generate_product_image_preview(product)
+                        logging.info(f"Generated preview for {m_number}")
+                    
                     img_base64 = base64.b64encode(png_bytes).decode()
                     content.append({
                         "type": "image_url",
@@ -3465,7 +3485,6 @@ def generate_content():
                             "url": f"data:image/png;base64,{img_base64}"
                         }
                     })
-                    logging.info(f"Added sample image for {m_number}")
                 except Exception as e:
                     logging.warning(f"Failed to generate sample image for {m_number}: {e}")
         

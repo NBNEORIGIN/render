@@ -424,7 +424,8 @@ def generate_product_image(product: dict, template_type: str = "main") -> bytes:
     # The rear image shows the 3M adhesive backing without any product graphics
     if template_type == "rear":
         svg_content = etree.tostring(root, encoding="unicode")
-        png_bytes = render_svg_to_bytes(svg_content, scale=4)
+        # Use scale=2 for balance between quality and performance (was scale=4)
+        png_bytes = render_svg_to_bytes(svg_content, scale=2)
         return png_bytes
     
     # For 'peel_and_stick' template, render with transparency to show full template graphics
@@ -463,7 +464,8 @@ def generate_product_image(product: dict, template_type: str = "main") -> bytes:
     svg_content = etree.tostring(root, encoding="unicode")
     # For peel_and_stick, use full_page to capture elements outside viewBox (EASY, arrow, PEEL & STICK text)
     use_full_page = (template_type == "peel_and_stick")
-    png_bytes = render_svg_to_bytes(svg_content, scale=4, transparent=render_transparent, full_page=use_full_page)
+    # Use scale=2 for balance between quality and performance (was scale=4)
+    png_bytes = render_svg_to_bytes(svg_content, scale=2, transparent=render_transparent, full_page=use_full_page)
     
     return png_bytes
 

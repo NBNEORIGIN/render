@@ -46,8 +46,9 @@ def _render_svg_impl(svg_content: str, scale: int, transparent: bool = False, fu
         temp_svg = Path(f.name)
     
     try:
-        page.goto(f'file:///{temp_svg.as_posix()}', timeout=60000)
-        page.wait_for_load_state('networkidle', timeout=10000)
+        # Reduced timeout from 60s to 30s for faster failure detection
+        page.goto(f'file:///{temp_svg.as_posix()}', timeout=30000)
+        page.wait_for_load_state('networkidle', timeout=5000)
         
         svg_element = page.locator('svg')
         
@@ -80,7 +81,8 @@ def _render_svg_impl(svg_content: str, scale: int, transparent: bool = False, fu
                 # Re-locate after modification
                 svg_element = page.locator('svg')
         
-        png_bytes = svg_element.screenshot(type='png', omit_background=transparent, timeout=60000)
+        # Reduced timeout from 60s to 30s
+        png_bytes = svg_element.screenshot(type='png', omit_background=transparent, timeout=30000)
     finally:
         page.close()
         context.close()

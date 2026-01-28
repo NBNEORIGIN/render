@@ -7,14 +7,34 @@ from pathlib import Path
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 if DATABASE_URL.startswith("postgres"):
-    # PostgreSQL (Render)
+    # PostgreSQL (Render) with connection pooling
     import psycopg2
+    from psycopg2 import pool
     from psycopg2.extras import RealDictCursor
     
+    # Create connection pool (min 2, max 10 connections)
+    _connection_pool = None
+    
+    def _get_pool():
+        global _connection_pool
+        if _connection_pool is None:
+            _connection_pool = pool.SimpleConnectionPool(
+                minconn=2,
+                maxconn=10,
+                dsn=DATABASE_URL
+            )
+        return _connection_pool
+    
     def get_db():
-        conn = psycopg2.connect(DATABASE_URL)
+        pool = _get_pool()
+        conn = pool.getconn()
         conn.autocommit = True
         return conn
+    
+    def release_db(conn):
+        """Release connection back to pool."""
+        pool = _get_pool()
+        pool.putconn(conn)
     
     def dict_cursor(conn):
         return conn.cursor(cursor_factory=RealDictCursor)
@@ -28,6 +48,10 @@ else:
         conn = sqlite3.connect(str(DB_PATH))
         conn.row_factory = sqlite3.Row
         return conn
+    
+    def release_db(conn):
+        """Close connection (no pooling for SQLite)."""
+        conn.close()
     
     def dict_cursor(conn):
         return conn.cursor()
@@ -140,91 +164,104 @@ class Product:
     @staticmethod
     def all():
         conn = get_db()
-        cur = dict_cursor(conn)
-        cur.execute("SELECT * FROM products ORDER BY m_number")
-        rows = cur.fetchall()
-        conn.close()
-        return [Product._ensure_ean_string(dict(row)) for row in rows]
+        try:
+            cur = dict_cursor(conn)
+            cur.execute("SELECT * FROM products ORDER BY m_number")
+            rows = cur.fetchall()
+            return [Product._ensure_ean_string(dict(row)) for row in rows]
+        finally:
+            release_db(conn)
     
     @staticmethod
     def get(m_number):
         conn = get_db()
-        cur = dict_cursor(conn)
-        cur.execute("SELECT * FROM products WHERE m_number = ?", (m_number,))
-        row = cur.fetchone()
-        conn.close()
-        return Product._ensure_ean_string(dict(row)) if row else None
+        try:
+            cur = dict_cursor(conn)
+            cur.execute("SELECT * FROM products WHERE m_number = ?", (m_number,))
+            row = cur.fetchone()
+            return Product._ensure_ean_string(dict(row)) if row else None
+        finally:
+            release_db(conn)
     
     @staticmethod
     def approved():
         conn = get_db()
-        cur = dict_cursor(conn)
-        cur.execute("SELECT * FROM products WHERE qa_status = 'approved' ORDER BY m_number")
-        rows = cur.fetchall()
-        conn.close()
-        return [Product._ensure_ean_string(dict(row)) for row in rows]
+        try:
+            cur = dict_cursor(conn)
+            cur.execute("SELECT * FROM products WHERE qa_status = 'approved' ORDER BY m_number")
+            rows = cur.fetchall()
+            return [Product._ensure_ean_string(dict(row)) for row in rows]
+        finally:
+            release_db(conn)
     
     @staticmethod
     def create(data):
         conn = get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO products (m_number, description, size, color, layout_mode, 
-                icon_files, text_line_1, text_line_2, text_line_3, orientation,
-                font, material, mounting_type, ean, qa_status, icon_scale, text_scale,
-                icon_offset_x, icon_offset_y)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            data.get('m_number'), data.get('description'), data.get('size'),
-            data.get('color'), data.get('layout_mode', 'A'), data.get('icon_files'),
-            data.get('text_line_1'), data.get('text_line_2'), data.get('text_line_3'),
-            data.get('orientation', 'landscape'), data.get('font', 'arial_heavy'),
-            data.get('material', '1mm_aluminium'), data.get('mounting_type', 'self_adhesive'),
-            data.get('ean'), data.get('qa_status', 'pending'),
-            data.get('icon_scale', 1.0), data.get('text_scale', 1.0),
-            data.get('icon_offset_x', 0.0), data.get('icon_offset_y', 0.0)
-        ))
-        conn.commit()
-        conn.close()
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO products (m_number, description, size, color, layout_mode, 
+                    icon_files, text_line_1, text_line_2, text_line_3, orientation,
+                    font, material, mounting_type, ean, qa_status, icon_scale, text_scale,
+                    icon_offset_x, icon_offset_y)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                data.get('m_number'), data.get('description'), data.get('size'),
+                data.get('color'), data.get('layout_mode', 'A'), data.get('icon_files'),
+                data.get('text_line_1'), data.get('text_line_2'), data.get('text_line_3'),
+                data.get('orientation', 'landscape'), data.get('font', 'arial_heavy'),
+                data.get('material', '1mm_aluminium'), data.get('mounting_type', 'self_adhesive'),
+                data.get('ean'), data.get('qa_status', 'pending'),
+                data.get('icon_scale', 1.0), data.get('text_scale', 1.0),
+                data.get('icon_offset_x', 0.0), data.get('icon_offset_y', 0.0)
+            ))
+            conn.commit()
+        finally:
+            release_db(conn)
     
     @staticmethod
     def update(m_number, data):
         conn = get_db()
-        cur = conn.cursor()
-        fields = []
-        values = []
-        for key, value in data.items():
-            if value is not None:
-                fields.append(f"{key} = ?")
-                values.append(value)
-        
-        if not fields:
-            # Nothing to update
-            conn.close()
-            return
-        
-        values.append(m_number)
-        sql = f"UPDATE products SET {', '.join(fields)}, updated_at = CURRENT_TIMESTAMP WHERE m_number = ?"
-        cur.execute(sql, values)
-        conn.commit()
-        conn.close()
+        try:
+            cur = conn.cursor()
+            fields = []
+            values = []
+            for key, value in data.items():
+                if value is not None:
+                    fields.append(f"{key} = ?")
+                    values.append(value)
+            
+            if not fields:
+                # Nothing to update
+                return
+            
+            values.append(m_number)
+            sql = f"UPDATE products SET {', '.join(fields)}, updated_at = CURRENT_TIMESTAMP WHERE m_number = ?"
+            cur.execute(sql, values)
+            conn.commit()
+        finally:
+            release_db(conn)
     
     @staticmethod
     def delete(m_number):
         conn = get_db()
-        cur = conn.cursor()
-        cur.execute("DELETE FROM products WHERE m_number = ?", (m_number,))
-        conn.commit()
-        conn.close()
+        try:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM products WHERE m_number = ?", (m_number,))
+            conn.commit()
+        finally:
+            release_db(conn)
     
     @staticmethod
     def clear_all():
         """Delete all products."""
         conn = get_db()
-        cur = conn.cursor()
-        cur.execute("DELETE FROM products")
-        conn.commit()
-        conn.close()
+        try:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM products")
+            conn.commit()
+        finally:
+            release_db(conn)
 
 
 if __name__ == "__main__":
