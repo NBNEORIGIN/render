@@ -1,5 +1,5 @@
 flask>=3.0.0
-flask-compress
+flask-compress>=1.13
 gunicorn>=21.0.0
 playwright>=1.40.0
 anthropic>=0.18.0
