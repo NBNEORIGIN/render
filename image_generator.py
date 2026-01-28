@@ -289,16 +289,24 @@ def _calculate_layout(
 def _load_icon(icon_filename: str) -> tuple[str, any]:
     """Load an icon file (SVG or PNG)."""
     icon_path = ICONS_DIR / icon_filename
+    logging.info(f"Looking for icon: {icon_filename} at {icon_path}")
+    
     if not icon_path.exists():
         # Try with different extensions
         for ext in [".svg", ".png", ".SVG", ".PNG"]:
             alt_path = ICONS_DIR / (icon_path.stem + ext)
             if alt_path.exists():
                 icon_path = alt_path
+                logging.info(f"Found icon with alternate extension: {alt_path}")
                 break
     
     if not icon_path.exists():
-        logging.warning(f"Icon not found: {icon_filename}")
+        # List available icons for debugging
+        try:
+            available = list(ICONS_DIR.glob("*"))
+            logging.error(f"Icon not found: {icon_filename}. Available icons: {[f.name for f in available[:10]]}")
+        except Exception as e:
+            logging.error(f"Icon not found: {icon_filename}. Could not list icons directory: {e}")
         return None, None
     
     suffix = icon_path.suffix.lower()
