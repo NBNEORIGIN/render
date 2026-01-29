@@ -4,7 +4,12 @@ from datetime import datetime
 from pathlib import Path
 
 # Use SQLite for local dev, PostgreSQL for production
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+# Helper function to get the correct SQL placeholder for the database type
+def get_placeholder():
+    """Return the correct SQL placeholder for the current database."""
+    return "%s" if DATABASE_URL.startswith("postgres") else "?"
 
 if DATABASE_URL.startswith("postgres"):
     # PostgreSQL (Render) with connection pooling
@@ -177,7 +182,8 @@ class Product:
         conn = get_db()
         try:
             cur = dict_cursor(conn)
-            cur.execute("SELECT * FROM products WHERE m_number = %s", (m_number,))
+            placeholder = get_placeholder()
+            cur.execute(f"SELECT * FROM products WHERE m_number = {placeholder}", (m_number,))
             row = cur.fetchone()
             return Product._ensure_ean_string(dict(row)) if row else None
         finally:
@@ -199,13 +205,16 @@ class Product:
         conn = get_db()
         try:
             cur = conn.cursor()
-            # Use %s for both PostgreSQL and SQLite (psycopg2 and sqlite3 both support it)
-            cur.execute("""
+            placeholder = get_placeholder()
+            cur.execute(f"""
                 INSERT INTO products (m_number, description, size, color, layout_mode, 
                     icon_files, text_line_1, text_line_2, text_line_3, orientation,
                     font, material, mounting_type, ean, qa_status, icon_scale, text_scale,
                     icon_offset_x, icon_offset_y)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 
+                    {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 
+                    {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 
+                    {placeholder}, {placeholder}, {placeholder}, {placeholder})
             """, (
                 data.get('m_number'), data.get('description'), data.get('size'),
                 data.get('color'), data.get('layout_mode', 'A'), data.get('icon_files'),
@@ -226,11 +235,12 @@ class Product:
         conn = get_db()
         try:
             cur = conn.cursor()
+            placeholder = get_placeholder()
             fields = []
             values = []
             for key, value in data.items():
                 if value is not None:
-                    fields.append(f"{key} = %s")
+                    fields.append(f"{key} = {placeholder}")
                     values.append(value)
             
             if not fields:
@@ -240,7 +250,7 @@ class Product:
             # Add updated_at timestamp
             fields.append("updated_at = CURRENT_TIMESTAMP")
             
-            sql = f"UPDATE products SET {', '.join(fields)} WHERE m_number = %s"
+            sql = f"UPDATE products SET {', '.join(fields)} WHERE m_number = {placeholder}"
             values.append(m_number)
             cur.execute(sql, tuple(values))
             if not DATABASE_URL.startswith("postgres"):
@@ -253,7 +263,8 @@ class Product:
         conn = get_db()
         try:
             cur = conn.cursor()
-            cur.execute("DELETE FROM products WHERE m_number = %s", (m_number,))
+            placeholder = get_placeholder()
+            cur.execute(f"DELETE FROM products WHERE m_number = {placeholder}", (m_number,))
             if not DATABASE_URL.startswith("postgres"):
                 conn.commit()  # Only needed for SQLite (PostgreSQL has autocommit)
         finally:
