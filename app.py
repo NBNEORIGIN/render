@@ -455,18 +455,30 @@ HTML_TEMPLATE = '''
                     <span id="lifestyle-status" style="margin-top: 10px; display: block; font-size: 12px;"></span>
                 </div>
                 
-                <!-- Step 2: Upload Images & Create M Number Folders -->
+                <!-- Step 2a: Upload Images to R2 -->
                 <div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                    <h3 style="margin: 0 0 10px 0;">☁️ Step 2: Upload Images & Create M Number Folders</h3>
+                    <h3 style="margin: 0 0 10px 0;">☁️ Step 2a: Upload Images to R2</h3>
                     <p style="font-size: 12px; color: #666; margin-bottom: 10px;">
-                        Generate all product images, upload to R2 for marketplace URLs, <strong>AND automatically save M Number folders to Google Drive</strong>.<br>
-                        Location: <code>G:\My Drive\001 NBNE\001 M\</code>
+                        Generate all product images and upload to R2 for marketplace URLs.
                     </p>
                     <button class="btn btn-warning" onclick="uploadImagesToR2()" id="btn-upload-r2" style="padding: 10px 20px;">
-                        ☁️ Upload Images & Save to Google Drive
+                        ☁️ Upload Images to R2
+                    </button>
+                    <br><span id="r2-upload-status" style="margin-top: 10px; display: inline-block; font-size: 12px;"></span>
+                </div>
+                
+                <!-- Step 2b: Create M Number Folders -->
+                <div style="background: #d1ecf1; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                    <h3 style="margin: 0 0 10px 0;">📁 Step 2b: Create M Number Folders</h3>
+                    <p style="font-size: 12px; color: #666; margin-bottom: 10px;">
+                        Generate M Number folders with all images and master SVG files, then download as ZIP.<br>
+                        You can manually extract and upload to: <code>G:\My Drive\001 NBNE\001 M\</code>
+                    </p>
+                    <button class="btn btn-info" onclick="downloadMNumberFolders()" id="btn-download-folders" style="padding: 10px 20px;">
+                        📥 Download M Number Folders (ZIP)
                     </button>
                     <button class="btn btn-outline-secondary" onclick="openMNumberFolder()" style="margin-left: 10px;">📂 Open M Folder</button>
-                    <br><span id="r2-upload-status" style="margin-top: 10px; display: inline-block; font-size: 12px;"></span>
+                    <br><span id="folders-status" style="margin-top: 10px; display: inline-block; font-size: 12px;"></span>
                 </div>
                 
                 <!-- Amazon Flatfile Preview Table -->
@@ -2372,14 +2384,14 @@ Use Cases: ${useCases}
             }
         }
         
-        // Step 2: Upload images to R2 and save to Google Drive
+        // Step 2a: Upload images to R2 only
         async function uploadImagesToR2() {
             const btn = document.getElementById('btn-upload-r2');
             const status = document.getElementById('r2-upload-status');
             btn.disabled = true;
             btn.innerHTML = '⏳ Uploading...';
             status.textContent = '';
-            exportLog('Uploading images to R2 and saving to Google Drive...');
+            exportLog('Uploading images to R2...');
             
             try {
                 const resp = await fetch('/api/upload-images-to-r2', {
@@ -2389,10 +2401,9 @@ Use Cases: ${useCases}
                 const data = await resp.json();
                 
                 if (data.success) {
-                    status.textContent = `✓ Uploaded ${data.total_uploaded} images for ${data.products} products. Saved ${data.total_saved_gdrive} to Google Drive!`;
+                    status.textContent = `✓ Uploaded ${data.total_uploaded} images for ${data.products} products to R2!`;
                     status.style.color = 'green';
                     exportLog(`Uploaded ${data.total_uploaded} images to R2`, 'success');
-                    exportLog(`Saved ${data.total_saved_gdrive} images to Google Drive`, 'success');
                     if (data.errors && data.errors.length > 0) {
                         exportLog(`Errors: ${data.errors.join(', ')}`, 'error');
                     }
@@ -2407,7 +2418,7 @@ Use Cases: ${useCases}
                 exportLog(`Error: ${e.message}`, 'error');
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = '☁️ Upload Images & Save to Google Drive';
+                btn.innerHTML = '☁️ Upload Images to R2';
             }
         }
         
@@ -4365,9 +4376,6 @@ def upload_images_to_r2():
     
     logging.info(f"Starting R2 upload for {len(products)} products")
     
-    # Google Drive M Number folders location
-    GDRIVE_EXPORTS_PATH = Path(r"G:\My Drive\001 NBNE\001 M")
-    
     # Image types: 001=main, 002=dimensions, 003=peel_and_stick, 004=rear
     IMAGE_TYPES = [
         ('main', '001'),
@@ -4378,7 +4386,6 @@ def upload_images_to_r2():
     
     results = []
     total_uploaded = 0
-    total_saved_gdrive = 0
     errors = []
     
     for product in products:
@@ -4421,94 +4428,22 @@ def upload_images_to_r2():
                 total_uploaded += 1
                 logging.info(f"Uploaded {r2_key}")
                 
-                # Also save to Google Drive M Number folder with proper structure
-                try:
-                    description = product.get('description', 'Sign')
-                    color = product.get('color', 'silver').lower()
-                    size = product.get('size', 'saville').lower()
-                    mounting = product.get('mounting_type', 'self_adhesive')
-                    
-                    # Format display names
-                    SIZE_DISPLAY = {'dracula': 'Dracula', 'saville': 'Saville', 'dick': 'Dick', 'barzan': 'Barzan', 'baby_jesus': 'Baby_Jesus'}
-                    COLOR_DISPLAY = {'silver': 'Silver', 'gold': 'Gold', 'white': 'White'}
-                    mounting_display = "Self Adhesive" if mounting == "self_adhesive" else "Pre-Drilled"
-                    color_display = COLOR_DISPLAY.get(color, color.title())
-                    size_display = SIZE_DISPLAY.get(size, size.title())
-                    
-                    folder_name = f"{m_number} {mounting_display} {description} aluminium sign {color_display} {size_display}"
-                    folder_path = GDRIVE_EXPORTS_PATH / folder_name
-                    
-                    # Create proper directory structure
-                    (folder_path / "000 Archive").mkdir(parents=True, exist_ok=True)
-                    (folder_path / "001 Design" / "000 Archive").mkdir(parents=True, exist_ok=True)
-                    (folder_path / "001 Design" / "001 MASTER FILE").mkdir(parents=True, exist_ok=True)
-                    (folder_path / "001 Design" / "002 MUTOH").mkdir(parents=True, exist_ok=True)
-                    (folder_path / "001 Design" / "003 MIMAKI").mkdir(parents=True, exist_ok=True)
-                    (folder_path / "001 Design" / "004 ROLAND").mkdir(parents=True, exist_ok=True)
-                    (folder_path / "001 Design" / "005 IMAGE GENERATION").mkdir(parents=True, exist_ok=True)
-                    (folder_path / "001 Design" / "006 HULK").mkdir(parents=True, exist_ok=True)
-                    (folder_path / "001 Design" / "007 EPSON").mkdir(parents=True, exist_ok=True)
-                    (folder_path / "001 Design" / "008 ROLF").mkdir(parents=True, exist_ok=True)
-                    (folder_path / "002 Images").mkdir(parents=True, exist_ok=True)
-                    (folder_path / "003 Blanks").mkdir(parents=True, exist_ok=True)
-                    (folder_path / "004 SOPs").mkdir(parents=True, exist_ok=True)
-                    
-                    # Save the JPEG to 002 Images
-                    img_path = folder_path / "002 Images" / f"{m_number} - {img_num}.jpg"
-                    with open(img_path, 'wb') as f:
-                        f.write(jpg_data)
-                    
-                    # Also save PNG to 002 Images
-                    png_path = folder_path / "002 Images" / f"{m_number} - {img_num}.png"
-                    with open(png_path, 'wb') as f:
-                        f.write(png_bytes)
-                    
-                    total_saved_gdrive += 1
-                except Exception as gdrive_err:
-                    logging.warning(f"Failed to save {r2_key} to Google Drive: {gdrive_err}")
-                
             except Exception as e:
                 import traceback
                 error_msg = f"{m_number} {img_type}: {str(e)}"
                 errors.append(error_msg)
                 logging.error(f"{error_msg}\n{traceback.format_exc()}")
         
-        # Generate and save Master SVG file for this product
-        try:
-            from image_generator import generate_master_svg_for_product
-            description = product.get('description', 'Sign')
-            color = product.get('color', 'silver').lower()
-            size = product.get('size', 'saville').lower()
-            mounting = product.get('mounting_type', 'self_adhesive')
-            
-            SIZE_DISPLAY = {'dracula': 'Dracula', 'saville': 'Saville', 'dick': 'Dick', 'barzan': 'Barzan', 'baby_jesus': 'Baby_Jesus'}
-            COLOR_DISPLAY = {'silver': 'Silver', 'gold': 'Gold', 'white': 'White'}
-            mounting_display = "Self Adhesive" if mounting == "self_adhesive" else "Pre-Drilled"
-            color_display = COLOR_DISPLAY.get(color, color.title())
-            size_display = SIZE_DISPLAY.get(size, size.title())
-            
-            folder_name = f"{m_number} {mounting_display} {description} aluminium sign {color_display} {size_display}"
-            folder_path = GDRIVE_EXPORTS_PATH / folder_name
-            
-            master_svg = generate_master_svg_for_product(product)
-            svg_path = folder_path / "001 Design" / "001 MASTER FILE" / f"{m_number} MASTER FILE.svg"
-            with open(svg_path, 'wb') as f:
-                f.write(master_svg)
-            logging.info(f"Saved master SVG for {m_number}")
-        except Exception as svg_err:
-            logging.warning(f"Failed to generate master SVG for {m_number}: {svg_err}")
-        
         results.append(product_results)
     
-    logging.info(f"R2 upload complete: {total_uploaded} uploaded, {total_saved_gdrive} saved to Google Drive, {len(errors)} errors")
+    logging.info(f"R2 upload complete: {total_uploaded} uploaded, {len(errors)} errors")
     
     return jsonify({
         "success": True if total_uploaded > 0 else False,
         "total_uploaded": total_uploaded,
-        "total_saved_gdrive": total_saved_gdrive,
         "products": len(products),
         "errors": errors[:20] if errors else [],
-        "message": f"Uploaded {total_uploaded} images for {len(products)} products. Also saved to Google Drive exports folder." + (f" ({len(errors)} errors)" if errors else "")
+        "message": f"Uploaded {total_uploaded} images for {len(products)} products to R2." + (f" ({len(errors)} errors)" if errors else "")
     })
 
 
