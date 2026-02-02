@@ -2372,6 +2372,45 @@ Use Cases: ${useCases}
             }
         }
         
+        // Step 2: Upload images to R2 and save to Google Drive
+        async function uploadImagesToR2() {
+            const btn = document.getElementById('btn-upload-r2');
+            const status = document.getElementById('r2-upload-status');
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Uploading...';
+            status.textContent = '';
+            exportLog('Uploading images to R2 and saving to Google Drive...');
+            
+            try {
+                const resp = await fetch('/api/upload-images-to-r2', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'}
+                });
+                const data = await resp.json();
+                
+                if (data.success) {
+                    status.textContent = `✓ Uploaded ${data.total_uploaded} images for ${data.products} products. Saved ${data.total_saved_gdrive} to Google Drive!`;
+                    status.style.color = 'green';
+                    exportLog(`Uploaded ${data.total_uploaded} images to R2`, 'success');
+                    exportLog(`Saved ${data.total_saved_gdrive} images to Google Drive`, 'success');
+                    if (data.errors && data.errors.length > 0) {
+                        exportLog(`Errors: ${data.errors.join(', ')}`, 'error');
+                    }
+                } else {
+                    status.textContent = `Error: ${data.error}`;
+                    status.style.color = 'red';
+                    exportLog(`Error: ${data.error}`, 'error');
+                }
+            } catch (e) {
+                status.textContent = 'Error uploading images';
+                status.style.color = 'red';
+                exportLog(`Error: ${e.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '☁️ Upload Images & Save to Google Drive';
+            }
+        }
+        
         // Separate marketplace export functions
         async function exportAmazonFlatfile() {
             const btn = document.getElementById('btn-export-amazon');
