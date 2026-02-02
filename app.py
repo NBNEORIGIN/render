@@ -4492,7 +4492,7 @@ def upload_images_to_r2():
             
             master_svg = generate_master_svg_for_product(product)
             svg_path = folder_path / "001 Design" / "001 MASTER FILE" / f"{m_number} MASTER FILE.svg"
-            with open(svg_path, 'w', encoding='utf-8') as f:
+            with open(svg_path, 'wb') as f:
                 f.write(master_svg)
             logging.info(f"Saved master SVG for {m_number}")
         except Exception as svg_err:
