@@ -219,6 +219,7 @@
             <button class="tab" onclick="showTab('qa')">✅ QA Review</button>
             <button class="tab" onclick="showTab('generate')">🎨 Generate</button>
             <button class="tab" onclick="showTab('export')">📤 Export</button>
+            <button class="tab" onclick="showTab('insights')">📈 Insights</button>
         </div>
         
         <!-- Products Tab -->
@@ -526,8 +527,84 @@
                 </div>
             </div>
         </div>
+
+        <!-- Insights Tab -->
+        <div id="insights-panel" class="panel">
+
+            <!-- Import Sales Report -->
+            <div class="card" style="margin-bottom:20px;">
+                <h2 style="margin-bottom:6px;">📥 Import Amazon Sales Report</h2>
+                <p style="color:#666;font-size:13px;margin-bottom:16px;">
+                    Download a Business Report from Seller Central (Reports → Business Reports → Detail Page Sales and Traffic).
+                    Select any date range and upload the CSV here.
+                </p>
+                <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+                    <div>
+                        <label style="font-size:12px;color:#555;display:block;margin-bottom:3px;">Report start</label>
+                        <input type="date" id="si-start" style="padding:7px;border:1px solid #ccc;border-radius:5px;">
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:#555;display:block;margin-bottom:3px;">Report end</label>
+                        <input type="date" id="si-end" style="padding:7px;border:1px solid #ccc;border-radius:5px;">
+                    </div>
+                    <div>
+                        <label style="font-size:12px;color:#555;display:block;margin-bottom:3px;">CSV file</label>
+                        <input type="file" id="si-file" accept=".csv" style="padding:5px;">
+                    </div>
+                    <button class="btn btn-primary" onclick="importSalesReport()">⬆️ Import</button>
+                </div>
+                <div id="si-status" style="margin-top:10px;font-size:13px;display:none;"></div>
+                <div id="si-imports" style="margin-top:14px;"></div>
+            </div>
+
+            <!-- Performance Dashboard -->
+            <div class="card" style="margin-bottom:20px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                    <h2 style="margin:0;">📊 Performance Dashboard</h2>
+                    <button class="btn btn-secondary" onclick="loadInsights()" style="font-size:13px;">🔄 Refresh</button>
+                </div>
+
+                <!-- Totals row -->
+                <div id="ins-totals" style="display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap;"></div>
+
+                <!-- Category breakdown -->
+                <h3 style="margin:0 0 10px;font-size:15px;">Revenue by category</h3>
+                <div id="ins-categories" style="margin-bottom:20px;overflow-x:auto;"></div>
+
+                <!-- Top performers table -->
+                <h3 style="margin:0 0 10px;font-size:15px;">Top performers</h3>
+                <div style="overflow-x:auto;">
+                    <table id="ins-top-table" style="width:100%;border-collapse:collapse;font-size:13px;display:none;">
+                        <thead>
+                            <tr style="background:#f0f0f0;text-align:left;">
+                                <th style="padding:8px;">SKU</th>
+                                <th style="padding:8px;">Title</th>
+                                <th style="padding:8px;text-align:right;">Units</th>
+                                <th style="padding:8px;text-align:right;">Revenue</th>
+                                <th style="padding:8px;text-align:right;">CVR %</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ins-top-body"></tbody>
+                    </table>
+                    <p id="ins-empty" style="color:#999;font-size:13px;display:none;">No sales data yet — import a report above.</p>
+                </div>
+            </div>
+
+            <!-- AI Recommendations -->
+            <div class="card">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <div>
+                        <h2 style="margin:0 0 4px;">🤖 Product Recommendations</h2>
+                        <p style="color:#666;font-size:13px;margin:0;">Claude analyses your sales data and recommends what to make next.</p>
+                    </div>
+                    <button class="btn btn-primary" onclick="loadRecommendations()" id="btn-recommend">✨ Generate</button>
+                </div>
+                <div id="ins-recs" style="margin-top:14px;"></div>
+            </div>
+        </div>
+
     </div>
-    
+
     <!-- Add/Edit Product Modal -->
     <div id="product-modal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000;">
         <div style="background: white; max-width: 600px; margin: 50px auto; border-radius: 12px; padding: 20px;">
@@ -751,6 +828,7 @@
             
             if (tab === 'products') loadProducts();
             if (tab === 'qa') loadQAProducts();
+            if (tab === 'insights') { loadInsights(); loadImportHistory(); }
         }
         
         async function loadProducts() {
@@ -2808,6 +2886,151 @@ Use Cases: ${useCases}
             loadProducts();
             loadIcons();
             switchCategory();
+        }
+
+        // ── Insights / Sales Feedback Loop ───────────────────────────────────
+        async function importSalesReport() {
+            const file  = document.getElementById('si-file').files[0];
+            const start = document.getElementById('si-start').value;
+            const end   = document.getElementById('si-end').value;
+            const status = document.getElementById('si-status');
+            if (!file || !start || !end) {
+                status.style.display = 'block';
+                status.style.color = '#c53030';
+                status.textContent = 'Please select a file and set both dates.';
+                return;
+            }
+            status.style.display = 'block';
+            status.style.color = '#555';
+            status.textContent = 'Uploading…';
+            const fd = new FormData();
+            fd.append('file', file);
+            fd.append('report_start', start);
+            fd.append('report_end', end);
+            const res = await fetch('/api/sales/import', { method: 'POST', body: fd });
+            const data = await res.json();
+            if (res.ok) {
+                status.style.color = '#276749';
+                status.textContent = `✓ Imported ${data.rows} rows (import #${data.import_id})`;
+                loadInsights();
+                loadImportHistory();
+            } else {
+                status.style.color = '#c53030';
+                status.textContent = data.error || 'Import failed.';
+            }
+        }
+
+        async function loadImportHistory() {
+            const res = await fetch('/api/sales/imports');
+            const imports = await res.json();
+            const el = document.getElementById('si-imports');
+            if (!imports.length) { el.innerHTML = ''; return; }
+            el.innerHTML = '<p style="font-size:12px;color:#888;margin-bottom:6px;">Previous imports:</p>' +
+                imports.map(i =>
+                    `<span style="font-size:12px;background:#f0f0f0;padding:3px 8px;border-radius:4px;margin-right:6px;display:inline-block;margin-bottom:4px;">
+                        ${i.report_start} – ${i.report_end} &nbsp;·&nbsp; ${i.row_count} rows &nbsp;·&nbsp; ${i.imported_by}
+                    </span>`
+                ).join('');
+        }
+
+        async function loadInsights() {
+            const res = await fetch('/api/sales/performance');
+            if (!res.ok) return;
+            const d = await res.json();
+
+            // Totals
+            const totals = document.getElementById('ins-totals');
+            totals.innerHTML = `
+                <div style="background:#ebf8ff;border-radius:8px;padding:14px 20px;min-width:130px;">
+                    <div style="font-size:22px;font-weight:700;">£${(d.totals.revenue||0).toLocaleString('en-GB',{maximumFractionDigits:0})}</div>
+                    <div style="font-size:12px;color:#555;">Total revenue</div>
+                </div>
+                <div style="background:#f0fff4;border-radius:8px;padding:14px 20px;min-width:130px;">
+                    <div style="font-size:22px;font-weight:700;">${(d.totals.units||0).toLocaleString()}</div>
+                    <div style="font-size:12px;color:#555;">Total units</div>
+                </div>
+                <div style="background:#fffbeb;border-radius:8px;padding:14px 20px;min-width:130px;">
+                    <div style="font-size:22px;font-weight:700;">${d.imports.length}</div>
+                    <div style="font-size:12px;color:#555;">Reports imported</div>
+                </div>`;
+
+            // Category bars
+            const catEl = document.getElementById('ins-categories');
+            if (d.categories.length) {
+                const maxRev = d.categories[0].revenue || 1;
+                catEl.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:13px;">' +
+                    d.categories.map(c => {
+                        const pct = Math.round((c.revenue / maxRev) * 100);
+                        return `<tr style="border-bottom:1px solid #f0f0f0;">
+                            <td style="padding:6px 10px 6px 0;width:180px;white-space:nowrap;">${c.category}</td>
+                            <td style="padding:6px 8px;">
+                                <div style="background:#e2e8f0;border-radius:3px;height:14px;width:100%;min-width:120px;">
+                                    <div style="background:#4299e1;border-radius:3px;height:14px;width:${pct}%;"></div>
+                                </div>
+                            </td>
+                            <td style="padding:6px 0 6px 8px;text-align:right;white-space:nowrap;">£${(c.revenue||0).toLocaleString('en-GB',{maximumFractionDigits:0})}</td>
+                            <td style="padding:6px 0 6px 12px;text-align:right;color:#666;">${(c.units||0).toFixed(0)} units</td>
+                            <td style="padding:6px 0 6px 12px;text-align:right;color:#666;">${c.products} products</td>
+                        </tr>`;
+                    }).join('') + '</table>';
+            } else {
+                catEl.innerHTML = '<p style="color:#999;font-size:13px;">No data yet.</p>';
+            }
+
+            // Top performers table
+            const tbody = document.getElementById('ins-top-body');
+            const table = document.getElementById('ins-top-table');
+            const empty = document.getElementById('ins-empty');
+            if (d.top_performers.length) {
+                table.style.display = 'table';
+                empty.style.display = 'none';
+                tbody.innerHTML = d.top_performers.map((p, i) => {
+                    const bg = i % 2 === 0 ? '#fff' : '#fafafa';
+                    const cvr = parseFloat(p.blended_cvr) || 0;
+                    const cvrCol = cvr >= 40 ? '#276749' : cvr >= 15 ? '#744210' : '#555';
+                    return `<tr style="background:${bg};">
+                        <td style="padding:7px 8px;font-family:monospace;font-size:12px;">${p.sku||''}</td>
+                        <td style="padding:7px 8px;max-width:340px;">${(p.title||'').substring(0,80)}${(p.title||'').length>80?'…':''}</td>
+                        <td style="padding:7px 8px;text-align:right;">${(p.total_units||0).toFixed(0)}</td>
+                        <td style="padding:7px 8px;text-align:right;font-weight:600;">£${(p.total_revenue||0).toLocaleString('en-GB',{maximumFractionDigits:0})}</td>
+                        <td style="padding:7px 8px;text-align:right;color:${cvrCol};font-weight:600;">${cvr.toFixed(1)}%</td>
+                    </tr>`;
+                }).join('');
+            } else {
+                table.style.display = 'none';
+                empty.style.display = 'block';
+            }
+        }
+
+        async function loadRecommendations() {
+            const btn = document.getElementById('btn-recommend');
+            const el  = document.getElementById('ins-recs');
+            btn.disabled = true;
+            btn.textContent = '⏳ Analysing…';
+            el.innerHTML = '<p style="color:#555;font-size:13px;">Claude is analysing your sales data…</p>';
+            const res = await fetch('/api/sales/recommend', { method: 'POST' });
+            btn.disabled = false;
+            btn.textContent = '✨ Generate';
+            if (!res.ok) {
+                const d = await res.json();
+                el.innerHTML = `<p style="color:#c53030;font-size:13px;">${d.error}</p>`;
+                return;
+            }
+            const data = await res.json();
+            if (!data.recommendations.length) {
+                el.innerHTML = '<p style="color:#999;font-size:13px;">No recommendations returned.</p>';
+                return;
+            }
+            el.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;">' +
+                data.recommendations.map((r, i) => `
+                    <div style="border:1px solid #e2e8f0;border-radius:8px;padding:14px;background:#fff;">
+                        <div style="font-size:11px;font-weight:700;color:#4299e1;text-transform:uppercase;margin-bottom:6px;">
+                            Recommendation ${i+1} · ${r.size||'—'}
+                        </div>
+                        <div style="font-weight:600;font-size:14px;margin-bottom:8px;line-height:1.4;">${r.title}</div>
+                        <div style="font-size:12px;color:#666;line-height:1.5;">${r.reason}</div>
+                    </div>`
+                ).join('') + '</div>';
         }
 
         // ── Bug Report ────────────────────────────────────────────────────────

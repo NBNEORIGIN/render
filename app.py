@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from config import SECRET_KEY, COLORS, BRAND_NAME, IMAGES_DIR
-from models import init_db, Product, Blank, User
+from models import init_db, Product, Blank, User, SalesImport, SalesData
 from jobs import submit_job, get_job, get_all_jobs, job_to_dict, start_workers
 
 app = Flask(__name__)
@@ -1803,6 +1803,224 @@ def update_blank(slug):
         return jsonify({"error": "Blank not found"}), 404
     Blank.update(slug, request.json)
     return jsonify({"success": True})
+
+
+# ── Sales feedback loop ────────────────────────────────────────────────────────
+
+def _parse_sales_csv(file_content: str) -> list[dict]:
+    """Parse an Amazon Business Report CSV into a list of row dicts."""
+    import csv, io
+
+    def _n(v):
+        v = str(v).replace(',', '').replace('£', '').replace('%', '').strip()
+        try:
+            return float(v)
+        except ValueError:
+            return 0.0
+
+    rows = []
+    reader = csv.DictReader(io.StringIO(file_content))
+    for row in reader:
+        asin = row.get('(Child) ASIN', '').strip()
+        sku  = row.get('SKU', '').strip()
+        if not asin and not sku:
+            continue
+        rows.append({
+            'asin':        asin,
+            'parent_asin': row.get('(Parent) ASIN', '').strip(),
+            'sku':         sku,
+            'title':       row.get('Title', '').strip(),
+            'sessions':    _n(row.get('Sessions \u2013 Total', 0)),
+            'units':       _n(row.get('Units ordered', 0)),
+            'revenue':     _n(row.get('Ordered Product Sales', 0)),
+            'cvr':         _n(row.get('Unit Session Percentage', 0)),
+            'buy_box_pct': _n(row.get('Featured Offer (Buy Box) percentage', 0)),
+        })
+    return rows
+
+
+def _infer_category(title: str) -> str:
+    t = title.lower()
+    if any(w in t for w in ('push', 'pull', 'door sign')):   return 'Push/Pull Door Signs'
+    if any(w in t for w in ('smok', 'vap')):                  return 'No Smoking/Vaping'
+    if 'park' in t:                                           return 'Parking'
+    if any(w in t for w in ('bereavement', 'memorial', 'remembrance', 'tribute', "in memory")): return 'Memorial'
+    if any(w in t for w in ('dog', 'pet', 'animal')):         return 'Dogs/Pets'
+    if any(w in t for w in ('staff only', 'no entry', 'restricted', 'authorised', 'authorized')): return 'Access/Restricted'
+    if any(w in t for w in ('private', 'property', 'trespass')): return 'Private Property'
+    if any(w in t for w in ('caller', 'canvass', 'sales people', 'cold call')): return 'No Cold Callers'
+    if any(w in t for w in ('cctv', 'surveillance', 'camera', 'security')):    return 'CCTV/Security'
+    if any(w in t for w in ('fire', 'emergency', 'evacuation')):               return 'Fire Safety'
+    if any(w in t for w in ('photog', 'filming', 'recording')):                return 'Photography/Filming'
+    if any(w in t for w in ('toilet', 'bathroom', 'wc', 'flush')):             return 'Bathroom/WC'
+    if any(w in t for w in ('caution', 'warning', 'danger', 'hazard')):        return 'Hazard/Warning'
+    if 'parcel' in t or 'delivery' in t:                                        return 'Delivery/Parcel'
+    return 'Other'
+
+
+@app.route('/api/sales/import', methods=['POST'])
+def import_sales():
+    """Accept an Amazon Business Report CSV upload and store the sales data."""
+    if 'file' not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    f = request.files['file']
+    report_start = request.form.get('report_start', '').strip()
+    report_end   = request.form.get('report_end', '').strip()
+
+    if not report_start or not report_end:
+        return jsonify({"error": "report_start and report_end are required (YYYY-MM-DD)"}), 400
+
+    if SalesImport.import_exists(report_start, report_end):
+        return jsonify({"error": f"Report for {report_start}–{report_end} already imported"}), 409
+
+    content = f.read().decode('utf-8-sig')
+    rows = _parse_sales_csv(content)
+    if not rows:
+        return jsonify({"error": "No data rows found in CSV"}), 400
+
+    import_id = SalesImport.create(
+        filename=f.filename,
+        report_start=report_start,
+        report_end=report_end,
+        row_count=len(rows),
+        imported_by=session.get('user_email', 'unknown'),
+    )
+
+    for row in rows:
+        row['import_id']    = import_id
+        row['report_start'] = report_start
+        row['report_end']   = report_end
+
+    SalesData.bulk_insert(rows)
+    return jsonify({"ok": True, "import_id": import_id, "rows": len(rows)})
+
+
+@app.route('/api/sales/performance')
+def sales_performance():
+    """Return aggregated performance data across all imports."""
+    from collections import defaultdict
+
+    top = SalesData.top_performers(limit=100)
+    all_rows = SalesData.category_summary()
+    imports = SalesImport.list_all()
+
+    # Category rollup
+    cats = defaultdict(lambda: {'units': 0, 'revenue': 0, 'products': 0, 'sessions': 0})
+    for r in all_rows:
+        cat = _infer_category(r['title'])
+        cats[cat]['units']    += r['units'] or 0
+        cats[cat]['revenue']  += r['revenue'] or 0
+        cats[cat]['products'] += 1
+
+    categories = [
+        {'category': k, **v, 'avg_cvr': round(v['units']*100/max(v['units'],1), 1)}
+        for k, v in sorted(cats.items(), key=lambda x: -x[1]['revenue'])
+    ]
+
+    return jsonify({
+        'imports': imports,
+        'top_performers': top[:50],
+        'categories': categories,
+        'totals': {
+            'revenue': sum(r['revenue'] or 0 for r in all_rows),
+            'units':   sum(r['units'] or 0 for r in all_rows),
+        }
+    })
+
+
+@app.route('/api/sales/recommend', methods=['POST'])
+def sales_recommend():
+    """Use Claude to generate product recommendations based on sales data."""
+    import anthropic
+
+    top = SalesData.top_performers(limit=30, min_units=1)
+    if not top:
+        return jsonify({"error": "No sales data yet — import a report first"}), 400
+
+    # Top 15 by revenue
+    top_lines = "\n".join(
+        f"- {r['sku']} | {r['title'][:70]} | {r['total_units']:.0f} units | "
+        f"£{r['total_revenue']:.0f} revenue | {r['blended_cvr']:.1f}% CVR"
+        for r in top[:15]
+    )
+
+    # Categories performing well
+    all_rows = SalesData.category_summary()
+    from collections import defaultdict
+    cats = defaultdict(lambda: {'units': 0, 'revenue': 0, 'count': 0})
+    for r in all_rows:
+        cat = _infer_category(r['title'])
+        cats[cat]['units']   += r['units'] or 0
+        cats[cat]['revenue'] += r['revenue'] or 0
+        cats[cat]['count']   += 1
+    cat_lines = "\n".join(
+        f"- {k}: {v['count']} products, {v['units']:.0f} units, £{v['revenue']:.0f} revenue"
+        for k, v in sorted(cats.items(), key=lambda x: -x[1]['revenue'])[:10]
+    )
+
+    prompt = f"""You are a product development advisor for NBNE, a UK sign manufacturer selling aluminium composite signs on Amazon UK.
+
+Our best-selling products from sales data:
+{top_lines}
+
+Performance by category:
+{cat_lines}
+
+Our signs are printed on brushed aluminium composite blanks in sizes:
+- 9.5×9.5cm circular (dracula) — XS
+- 11×9.5cm (saville) — S
+- 14×9cm (dick) — M
+- 19×14cm (barzan) — L
+- 29×19cm with peel tab (baby_jesus) — XL
+
+Based on what is ACTUALLY selling (high units, high CVR), recommend exactly 12 new sign products we should create next.
+For each, provide:
+1. Product title (as it would appear on Amazon UK)
+2. Which blank size fits best
+3. One sentence explaining why this will sell based on the data
+
+Format each as:
+PRODUCT: <title>
+SIZE: <slug>
+REASON: <why>
+
+Focus on:
+- Variants of proven winners (same category, different message or size)
+- Underserved niches adjacent to our top categories
+- High-volume UK search terms not yet covered
+"""
+
+    client = anthropic.Anthropic()
+    message = client.messages.create(
+        model="claude-opus-4-6",
+        max_tokens=1500,
+        messages=[{"role": "user", "content": prompt}]
+    )
+    raw = message.content[0].text
+
+    # Parse into structured list
+    recommendations = []
+    current = {}
+    for line in raw.split('\n'):
+        line = line.strip()
+        if line.startswith('PRODUCT:'):
+            if current.get('title'):
+                recommendations.append(current)
+            current = {'title': line[8:].strip(), 'size': '', 'reason': ''}
+        elif line.startswith('SIZE:'):
+            current['size'] = line[5:].strip()
+        elif line.startswith('REASON:'):
+            current['reason'] = line[7:].strip()
+    if current.get('title'):
+        recommendations.append(current)
+
+    return jsonify({'recommendations': recommendations, 'raw': raw})
+
+
+@app.route('/api/sales/imports')
+def list_imports():
+    return jsonify(SalesImport.list_all())
 
 
 @app.route('/api/bug-report', methods=['POST'])

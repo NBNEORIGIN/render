@@ -185,6 +185,40 @@ def init_db():
         )
     """)
 
+    # ── sales_imports ─────────────────────────────────────────────────────────
+    cur.execute(f"""
+        CREATE TABLE IF NOT EXISTS sales_imports (
+            id          {id_type},
+            filename    TEXT,
+            report_start TEXT,
+            report_end  TEXT,
+            row_count   INTEGER DEFAULT 0,
+            imported_by TEXT,
+            imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
+    # ── sales_data ────────────────────────────────────────────────────────────
+    cur.execute(f"""
+        CREATE TABLE IF NOT EXISTS sales_data (
+            id          {id_type},
+            import_id   INTEGER,
+            asin        TEXT,
+            parent_asin TEXT,
+            sku         TEXT,
+            title       TEXT,
+            sessions    REAL DEFAULT 0,
+            units       REAL DEFAULT 0,
+            revenue     REAL DEFAULT 0,
+            cvr         REAL DEFAULT 0,
+            buy_box_pct REAL DEFAULT 0,
+            report_start TEXT,
+            report_end  TEXT
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sales_sku  ON sales_data(sku)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_sales_asin ON sales_data(asin)")
+
     _commit(conn)
     release_db(conn)
 
@@ -541,6 +575,133 @@ class Product:
             cur = conn.cursor()
             cur.execute("DELETE FROM products")
             _commit(conn)
+        finally:
+            release_db(conn)
+
+
+class SalesImport:
+    @staticmethod
+    def create(filename, report_start, report_end, row_count, imported_by):
+        conn = get_db()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                f"INSERT INTO sales_imports (filename, report_start, report_end, row_count, imported_by)"
+                f" VALUES ({P},{P},{P},{P},{P})",
+                (filename, report_start, report_end, row_count, imported_by),
+            )
+            _commit(conn)
+            if DATABASE_URL.startswith("postgres"):
+                cur.execute("SELECT lastval()")
+            else:
+                cur.execute("SELECT last_insert_rowid()")
+            return cur.fetchone()[0]
+        finally:
+            release_db(conn)
+
+    @staticmethod
+    def list_all():
+        conn = get_db()
+        try:
+            cur = dict_cursor(conn)
+            cur.execute("SELECT * FROM sales_imports ORDER BY imported_at DESC")
+            return [dict(r) for r in cur.fetchall()]
+        finally:
+            release_db(conn)
+
+
+class SalesData:
+    @staticmethod
+    def bulk_insert(rows: list[dict]):
+        """Insert a batch of sales rows. Each dict must have keys matching the table."""
+        if not rows:
+            return
+        conn = get_db()
+        try:
+            cur = conn.cursor()
+            for r in rows:
+                cur.execute(
+                    f"INSERT INTO sales_data"
+                    f" (import_id,asin,parent_asin,sku,title,sessions,units,revenue,cvr,buy_box_pct,report_start,report_end)"
+                    f" VALUES ({P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P})",
+                    (
+                        r["import_id"], r["asin"], r["parent_asin"], r["sku"], r["title"],
+                        r["sessions"], r["units"], r["revenue"], r["cvr"], r["buy_box_pct"],
+                        r["report_start"], r["report_end"],
+                    ),
+                )
+            _commit(conn)
+        finally:
+            release_db(conn)
+
+    @staticmethod
+    def top_performers(limit=50, min_units=1):
+        """Return top products by revenue across all imports, deduplicated by SKU."""
+        conn = get_db()
+        try:
+            cur = dict_cursor(conn)
+            cur.execute(f"""
+                SELECT
+                    sku, parent_asin, title,
+                    SUM(units)   AS total_units,
+                    SUM(revenue) AS total_revenue,
+                    SUM(sessions) AS total_sessions,
+                    CASE WHEN SUM(sessions) > 0
+                         THEN ROUND(SUM(units)*100.0/SUM(sessions), 1)
+                         ELSE 0 END AS blended_cvr,
+                    COUNT(DISTINCT import_id) AS import_count
+                FROM sales_data
+                WHERE units >= {min_units}
+                GROUP BY sku, parent_asin, title
+                ORDER BY total_revenue DESC
+                LIMIT {limit}
+            """)
+            return [dict(r) for r in cur.fetchall()]
+        finally:
+            release_db(conn)
+
+    @staticmethod
+    def category_summary():
+        """Group top performers by inferred category."""
+        conn = get_db()
+        try:
+            cur = dict_cursor(conn)
+            cur.execute("""
+                SELECT sku, title, SUM(units) AS units, SUM(revenue) AS revenue,
+                       CASE WHEN SUM(sessions)>0
+                            THEN ROUND(SUM(units)*100.0/SUM(sessions),1) ELSE 0 END AS cvr
+                FROM sales_data
+                GROUP BY sku, title
+                ORDER BY revenue DESC
+            """)
+            rows = [dict(r) for r in cur.fetchall()]
+            return rows
+        finally:
+            release_db(conn)
+
+    @staticmethod
+    def for_sku(sku: str):
+        conn = get_db()
+        try:
+            cur = dict_cursor(conn)
+            cur.execute(
+                f"SELECT * FROM sales_data WHERE sku={P} ORDER BY report_end DESC", (sku,)
+            )
+            return [dict(r) for r in cur.fetchall()]
+        finally:
+            release_db(conn)
+
+    @staticmethod
+    def import_exists(report_start, report_end):
+        """Check if a report for this exact date range was already imported."""
+        conn = get_db()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                f"SELECT id FROM sales_imports WHERE report_start={P} AND report_end={P}",
+                (report_start, report_end),
+            )
+            return cur.fetchone() is not None
         finally:
             release_db(conn)
 
