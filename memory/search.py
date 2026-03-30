@@ -77,17 +77,19 @@ def main():
         return
 
     for r in results:
-        bar = "█" * int(r["score"] * 20)
+        bar = "#" * int(r["score"] * 20)
+        title = r["title"].encode("ascii", "replace").decode("ascii")
         print(f"[{r['score']:.3f}] {bar}")
-        print(f"  {r['title']}")
+        print(f"  {title}")
         print(f"  {r['file']}  |  bm25={r['bm25']:.3f}  cosine={r['cosine']:.4f}")
+        def _safe(s):
+            return s.encode("ascii", "replace").decode("ascii")
         if show_body:
             print()
-            print(r["body"])
+            print(_safe(r["body"]))
         else:
-            # Print first 300 chars of body
-            preview = r["body"].replace("\n", " ")[:300]
-            print(f"  {preview}…" if len(r["body"]) > 300 else f"  {preview}")
+            preview = _safe(r["body"].replace("\n", " ")[:300])
+            print(f"  {preview}..." if len(r["body"]) > 300 else f"  {preview}")
         print()
 
     store.close()
