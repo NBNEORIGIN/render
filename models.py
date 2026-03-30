@@ -609,6 +609,20 @@ class SalesImport:
         finally:
             release_db(conn)
 
+    @staticmethod
+    def import_exists(report_start, report_end):
+        """Check if a report for this exact date range was already imported."""
+        conn = get_db()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                f"SELECT id FROM sales_imports WHERE report_start={P} AND report_end={P}",
+                (report_start, report_end),
+            )
+            return cur.fetchone() is not None
+        finally:
+            release_db(conn)
+
 
 class SalesData:
     @staticmethod
@@ -647,7 +661,7 @@ class SalesData:
                     SUM(revenue) AS total_revenue,
                     SUM(sessions) AS total_sessions,
                     CASE WHEN SUM(sessions) > 0
-                         THEN ROUND(SUM(units)*100.0/SUM(sessions), 1)
+                         THEN ROUND(CAST(SUM(units)*100.0/SUM(sessions) AS NUMERIC), 1)
                          ELSE 0 END AS blended_cvr,
                     COUNT(DISTINCT import_id) AS import_count
                 FROM sales_data
@@ -669,7 +683,7 @@ class SalesData:
             cur.execute("""
                 SELECT sku, title, SUM(units) AS units, SUM(revenue) AS revenue,
                        CASE WHEN SUM(sessions)>0
-                            THEN ROUND(SUM(units)*100.0/SUM(sessions),1) ELSE 0 END AS cvr
+                            THEN ROUND(CAST(SUM(units)*100.0/SUM(sessions) AS NUMERIC),1) ELSE 0 END AS cvr
                 FROM sales_data
                 GROUP BY sku, title
                 ORDER BY revenue DESC
@@ -690,21 +704,6 @@ class SalesData:
             return [dict(r) for r in cur.fetchall()]
         finally:
             release_db(conn)
-
-    @staticmethod
-    def import_exists(report_start, report_end):
-        """Check if a report for this exact date range was already imported."""
-        conn = get_db()
-        try:
-            cur = conn.cursor()
-            cur.execute(
-                f"SELECT id FROM sales_imports WHERE report_start={P} AND report_end={P}",
-                (report_start, report_end),
-            )
-            return cur.fetchone() is not None
-        finally:
-            release_db(conn)
-
 
 if __name__ == "__main__":
     init_db()
