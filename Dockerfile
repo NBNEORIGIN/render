@@ -15,4 +15,4 @@ RUN playwright install --with-deps chromium
 COPY . .
 
 # --workers 1 until job state is moved to DB (multi-worker causes silent job loss)
-CMD gunicorn app:app --bind 0.0.0.0:${PORT:-10000} --workers 1 --timeout 120
+CMD gunicorn app:app --bind 0.0.0.0:5000 --workers 1 --timeout 120

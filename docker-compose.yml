@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: render
+      POSTGRES_USER: nbne
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nbne -d render"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:5000"
+    environment:
+      DATABASE_URL: postgres://nbne:${DB_PASSWORD}@db:5432/render
+      APP_TOKEN: ${APP_TOKEN}
+      SECRET_KEY: ${SECRET_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      EBAY_CLIENT_ID: ${EBAY_CLIENT_ID}
+      EBAY_CLIENT_SECRET: ${EBAY_CLIENT_SECRET}
+      EBAY_RU_NAME: ${EBAY_RU_NAME}
+      EBAY_ENVIRONMENT: ${EBAY_ENVIRONMENT:-PRODUCTION}
+      EBAY_MERCHANT_LOCATION_KEY: ${EBAY_MERCHANT_LOCATION_KEY:-default}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://render.nbnesigns.co.uk}
+      IMAGES_DIR: /images
+    volumes:
+      - images:/images
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  images:
