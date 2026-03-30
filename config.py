@@ -12,8 +12,15 @@ DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{BASE_DIR / 'render.db
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
-# Authentication — set APP_TOKEN in environment; leave empty to disable (dev only)
-APP_TOKEN = os.environ.get("APP_TOKEN", "")
+# Default users seeded on first run (email -> display name)
+DEFAULT_USERS = {
+    "gabby@nbnesigns.com": "Gabby",
+    "toby@nbnesigns.com": "Toby",
+    "sanna@nbnesigns.com": "Sanna",
+    "ivan@nbnesigns.com": "Ivan",
+    "ben@nbnesigns.com": "Ben",
+}
+DEFAULT_PASSWORD = "!49Monkswood"
 
 # Flask
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")

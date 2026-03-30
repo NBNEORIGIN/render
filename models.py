@@ -173,11 +173,24 @@ def init_db():
         )
     """)
 
+    # ── users ─────────────────────────────────────────────────────────────────
+    cur.execute(f"""
+        CREATE TABLE IF NOT EXISTS users (
+            id {id_type},
+            email TEXT UNIQUE NOT NULL,
+            name TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            active INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     _commit(conn)
     release_db(conn)
 
-    # Seed blanks from config if the table is empty
+    # Seed blanks and users
     _seed_blanks()
+    _seed_users()
 
 
 def _seed_blanks():
@@ -215,6 +228,99 @@ def _seed_blanks():
         _commit(conn)
     finally:
         release_db(conn)
+
+
+def _seed_users():
+    """Populate the users table with the default NBNE team if empty."""
+    from werkzeug.security import generate_password_hash
+    from config import DEFAULT_USERS
+
+    conn = get_db()
+    try:
+        cur = dict_cursor(conn)
+        cur.execute("SELECT COUNT(*) as n FROM users")
+        if dict(cur.fetchone())["n"] > 0:
+            return
+        cur2 = conn.cursor()
+        for email, name in DEFAULT_USERS.items():
+            from config import DEFAULT_PASSWORD
+            cur2.execute(
+                f"INSERT INTO users (email, name, password_hash) VALUES ({P},{P},{P})",
+                (email, name, generate_password_hash(DEFAULT_PASSWORD)),
+            )
+        _commit(conn)
+    finally:
+        release_db(conn)
+
+
+# ── User model ────────────────────────────────────────────────────────────────
+
+class User:
+    @staticmethod
+    def authenticate(email: str, password: str):
+        """Return user dict if credentials valid, else None."""
+        from werkzeug.security import check_password_hash
+        conn = get_db()
+        try:
+            cur = dict_cursor(conn)
+            cur.execute(f"SELECT * FROM users WHERE email = {P} AND active = 1", (email.lower().strip(),))
+            row = cur.fetchone()
+            if row:
+                u = dict(row)
+                if check_password_hash(u["password_hash"], password):
+                    return u
+            return None
+        finally:
+            release_db(conn)
+
+    @staticmethod
+    def get(email: str):
+        conn = get_db()
+        try:
+            cur = dict_cursor(conn)
+            cur.execute(f"SELECT * FROM users WHERE email = {P}", (email.lower().strip(),))
+            row = cur.fetchone()
+            return dict(row) if row else None
+        finally:
+            release_db(conn)
+
+    @staticmethod
+    def all():
+        conn = get_db()
+        try:
+            cur = dict_cursor(conn)
+            cur.execute("SELECT id, email, name, active, created_at FROM users ORDER BY name")
+            return [dict(r) for r in cur.fetchall()]
+        finally:
+            release_db(conn)
+
+    @staticmethod
+    def set_password(email: str, password: str):
+        from werkzeug.security import generate_password_hash
+        conn = get_db()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                f"UPDATE users SET password_hash = {P} WHERE email = {P}",
+                (generate_password_hash(password), email.lower().strip()),
+            )
+            _commit(conn)
+        finally:
+            release_db(conn)
+
+    @staticmethod
+    def create(email: str, name: str, password: str):
+        from werkzeug.security import generate_password_hash
+        conn = get_db()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                f"INSERT INTO users (email, name, password_hash) VALUES ({P},{P},{P})",
+                (email.lower().strip(), name, generate_password_hash(password)),
+            )
+            _commit(conn)
+        finally:
+            release_db(conn)
 
 
 # ── Blank model ───────────────────────────────────────────────────────────────

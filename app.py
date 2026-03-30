@@ -4,70 +4,83 @@ import json
 from pathlib import Path
 from datetime import datetime
 
-from flask import Flask, render_template, jsonify, request, Response, send_file, send_from_directory, make_response
+from flask import Flask, render_template, jsonify, request, Response, send_file, send_from_directory, make_response, session, redirect, url_for
 from flask_compress import Compress
-from flask_httpauth import HTTPTokenAuth
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from config import SECRET_KEY, COLORS, BRAND_NAME, APP_TOKEN, IMAGES_DIR
-from models import init_db, Product, Blank
+from config import SECRET_KEY, COLORS, BRAND_NAME, IMAGES_DIR
+from models import init_db, Product, Blank, User
 from jobs import submit_job, get_job, get_all_jobs, job_to_dict, start_workers
 
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 
 # ── Authentication ─────────────────────────────────────────────────────────────
-auth = HTTPTokenAuth(scheme="Bearer")
+_PUBLIC_PATHS = {"/health", "/favicon.ico"}
+_PUBLIC_PREFIXES = ("/login", "/static/", "/images/")
 
 LOGIN_HTML = """<!DOCTYPE html>
 <html><head><title>Render — Login</title>
-<style>body{font-family:Arial,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#1a1a2e}
+<style>
+body{font-family:Arial,sans-serif;display:flex;align-items:center;justify-content:center;
+     height:100vh;margin:0;background:#1a1a2e}
 .box{background:#fff;padding:40px;border-radius:8px;width:320px;text-align:center}
-h2{margin:0 0 24px}input{width:100%;padding:10px;margin:8px 0 16px;box-sizing:border-box;border:1px solid #ccc;border-radius:4px}
-button{width:100%;padding:10px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:16px}
-.err{color:red;margin-top:8px;display:none}</style></head>
-<body><div class="box"><h2>Render</h2>
-<input type="password" id="t" placeholder="Access token" onkeydown="if(event.key==='Enter')go()">
-<button onclick="go()">Enter</button><div class="err" id="e">Invalid token</div></div>
-<script>async function go(){const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:document.getElementById('t').value})});
-if(r.ok){location.href='/';}else{document.getElementById('e').style.display='block';}}</script>
-</body></html>"""
-
-@auth.verify_token
-def verify_token(token):
-    if not APP_TOKEN:
-        return True  # No token set — open (dev mode only)
-    return token == APP_TOKEN
-
-def _extract_token():
-    return (
-        request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
-        or request.cookies.get("token", "")
-        or request.args.get("token", "")
-    )
+h2{margin:0 0 24px}
+label{display:block;text-align:left;font-size:13px;color:#555;margin-bottom:4px}
+input{width:100%;padding:10px;margin-bottom:16px;box-sizing:border-box;
+      border:1px solid #ccc;border-radius:4px;font-size:15px}
+button{width:100%;padding:10px;background:#2563eb;color:#fff;border:none;
+       border-radius:4px;cursor:pointer;font-size:16px}
+button:hover{background:#1d4ed8}
+.err{color:red;margin-top:12px;font-size:14px}
+</style></head>
+<body><div class="box">
+<h2>Render</h2>
+<form method="POST" action="/login">
+  <label for="email">Email</label>
+  <input type="email" id="email" name="email" required autofocus placeholder="you@nbnesigns.com">
+  <label for="password">Password</label>
+  <input type="password" id="password" name="password" required>
+  <button type="submit">Sign in</button>
+  {error}
+</form>
+</div></body></html>"""
 
 @app.before_request
 def require_auth():
-    """Protect all routes. Exempt: /health, /login, /static/."""
-    if request.path in {"/health", "/login", "/favicon.ico"}:
+    """Protect all routes. Exempt: /health, /login, /static/, /images/."""
+    if request.path in _PUBLIC_PATHS:
         return None
-    if request.path.startswith("/static/") or request.path.startswith("/images/"):
+    if any(request.path.startswith(p) for p in _PUBLIC_PREFIXES):
         return None
-    if not verify_token(_extract_token()):
-        if not request.path.startswith("/api/") and request.accept_mimetypes.accept_html:
-            return make_response(LOGIN_HTML, 401)
-        return jsonify({"error": "Unauthorized"}), 401
+    if not session.get("user_email"):
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "Unauthorized"}), 401
+        return redirect(url_for("login_page"))
+
+@app.route("/login", methods=["GET"])
+def login_page():
+    if session.get("user_email"):
+        return redirect("/")
+    return LOGIN_HTML.format(error="")
 
 @app.route("/login", methods=["POST"])
-def login():
-    token = (request.json or {}).get("token", "") if request.is_json else request.form.get("token", "")
-    if APP_TOKEN and token != APP_TOKEN:
-        return jsonify({"error": "Invalid token"}), 401
-    resp = make_response(jsonify({"ok": True}))
-    resp.set_cookie("token", token, httponly=True, samesite="Lax", secure=request.is_secure)
-    return resp
+def login_post():
+    email = request.form.get("email", "").strip().lower()
+    password = request.form.get("password", "")
+    user = User.authenticate(email, password)
+    if user:
+        session["user_email"] = user["email"]
+        session["user_name"] = user["name"]
+        return redirect("/")
+    return LOGIN_HTML.format(error='<p class="err">Invalid email or password.</p>'), 401
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login_page"))
 
 @app.route("/health")
 def health():
