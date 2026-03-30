@@ -1805,5 +1805,48 @@ def update_blank(slug):
     return jsonify({"success": True})
 
 
+@app.route('/api/bug-report', methods=['POST'])
+def bug_report():
+    """Send a bug report email to the team."""
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    from config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, BUG_REPORT_RECIPIENTS
+
+    data = request.json or {}
+    name = data.get('name', 'Unknown').strip() or 'Unknown'
+    context = data.get('context', '').strip()
+    description = data.get('description', '').strip()
+    reporter_email = session.get('user_email', 'unknown')
+
+    if not description:
+        return jsonify({"error": "description required"}), 400
+
+    body = f"""Bug report from Render ({reporter_email})
+
+Reporter: {name}
+While doing: {context or '(not specified)'}
+
+--- Description ---
+{description}
+"""
+
+    msg = MIMEMultipart()
+    msg['From'] = SMTP_USER
+    msg['To'] = ', '.join(BUG_REPORT_RECIPIENTS)
+    msg['Subject'] = f'[Render] Bug report from {name}'
+    msg.attach(MIMEText(body, 'plain'))
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASSWORD)
+            s.sendmail(SMTP_USER, BUG_REPORT_RECIPIENTS, msg.as_string())
+        return jsonify({"ok": True})
+    except Exception as e:
+        app.logger.error("Bug report email failed: %s", e)
+        return jsonify({"error": "mail failed"}), 500
+
+
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

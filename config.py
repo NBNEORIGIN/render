@@ -25,6 +25,13 @@ DEFAULT_PASSWORD = "!49Monkswood"
 # Flask
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-key-change-in-production")
 
+# SMTP — IONOS outbound mail for bug reports
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.ionos.co.uk")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+BUG_REPORT_RECIPIENTS = ["toby@nbnesigns.com", "gabby@nbnesigns.com"]
+
 # eBay API
 EBAY_CLIENT_ID = os.environ.get("EBAY_CLIENT_ID", "")
 EBAY_CLIENT_SECRET = os.environ.get("EBAY_CLIENT_SECRET", "")
