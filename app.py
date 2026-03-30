@@ -44,7 +44,7 @@ button:hover{background:#1d4ed8}
   <label for="password">Password</label>
   <input type="password" id="password" name="password" required>
   <button type="submit">Sign in</button>
-  {error}
+  __ERROR__
 </form>
 </div></body></html>"""
 
@@ -64,7 +64,7 @@ def require_auth():
 def login_page():
     if session.get("user_email"):
         return redirect("/")
-    return LOGIN_HTML.format(error="")
+    return LOGIN_HTML.replace('__ERROR__',"")
 
 @app.route("/login", methods=["POST"])
 def login_post():
@@ -75,7 +75,7 @@ def login_post():
         session["user_email"] = user["email"]
         session["user_name"] = user["name"]
         return redirect("/")
-    return LOGIN_HTML.format(error='<p class="err">Invalid email or password.</p>'), 401
+    return LOGIN_HTML.replace('__ERROR__','<p class="err">Invalid email or password.</p>'), 401
 
 @app.route("/logout")
 def logout():
