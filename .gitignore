@@ -34,6 +34,18 @@ desktop.ini
 test_*.png
 test_*.jpg
 
+# Generated output files — never commit these
+*_lifestyle.jpg
+*_lifestyle.png
+lifestyle_background_*.png
+amazon_flatfile_*.xlsx
+etsy_shop_uploader_*.xlsx
+etsy_shop_uploader_*.csv
+exports/
+*.zip
+
 # Tokens/secrets
 *_tokens.json
 *_policies.json
+static/images/*
+!static/images/.gitkeep

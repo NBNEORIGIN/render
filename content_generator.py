@@ -10,15 +10,6 @@ import anthropic
 
 from jobs import Job
 
-# Product size dimensions in cm
-SIZE_DIMENSIONS_CM = {
-    "dracula": (9.5, 9.5),
-    "saville": (11.0, 9.5),
-    "dick": (14.0, 9.0),
-    "barzan": (19.0, 14.0),
-    "baby_jesus": (29.0, 19.0),
-}
-
 # Color display names
 COLOR_DISPLAY_NAMES = {
     "silver": "Silver Brushed Aluminium",
@@ -26,25 +17,7 @@ COLOR_DISPLAY_NAMES = {
     "gold": "Gold Brushed Aluminium",
 }
 
-# Size display names
-SIZE_DISPLAY_NAMES = {
-    "dracula": "9.5 x 9.5 cm",
-    "saville": "11 x 9.5 cm",
-    "dick": "14 x 9 cm",
-    "barzan": "19 x 14 cm",
-    "baby_jesus": "29 x 19 cm",
-}
-
-# Amazon size_map values
-SIZE_MAP_VALUES = {
-    "dracula": "XS",
-    "saville": "S",
-    "dick": "M",
-    "barzan": "L",
-    "baby_jesus": "XL",
-}
-
-# Pricing by size
+# Pricing by blank slug — update here when prices change
 SIZE_PRICING = {
     "dracula": 10.99,
     "saville": 11.99,
@@ -52,6 +25,18 @@ SIZE_PRICING = {
     "barzan": 15.99,
     "baby_jesus": 17.99,
 }
+
+
+def _blank(slug: str) -> dict:
+    """Load blank metadata from DB; fall back to safe defaults."""
+    from models import Blank
+    b = Blank.get(slug)
+    return b if b else {"width_mm": 100, "height_mm": 100, "display": slug, "amazon_code": ""}
+
+
+def _dimensions_cm(slug: str) -> tuple[float, float]:
+    b = _blank(slug)
+    return b["width_mm"] / 10, b["height_mm"] / 10
 
 # Mounting type info
 MOUNTING_INFO = {
@@ -116,7 +101,7 @@ def generate_content_for_product(
     color = product.get("color", "silver").lower()
     mounting_type = product.get("mounting_type", "self_adhesive")
     
-    length_cm, width_cm = SIZE_DIMENSIONS_CM.get(size, (10, 10))
+    length_cm, width_cm = _dimensions_cm(size)
     color_display = COLOR_DISPLAY_NAMES.get(color, color.title())
     mounting = MOUNTING_INFO.get(mounting_type, MOUNTING_INFO["self_adhesive"])
     

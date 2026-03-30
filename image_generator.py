@@ -1,6 +1,7 @@
-"""Image generator for SignMaker - creates product images from SVG templates.
+"""Image generator for Render — creates product images from SVG templates.
 
-Uses Playwright for SVG rendering (replaces Inkscape dependency).
+Uses Playwright for SVG rendering. Blank (substrate) configuration is
+loaded from the blanks DB table so new blanks can be added without code changes.
 """
 import base64
 import csv
@@ -14,11 +15,11 @@ from typing import Optional
 from lxml import etree
 from PIL import Image
 
-# Disable PIL decompression bomb check for large product images
-Image.MAX_IMAGE_PIXELS = None
+# Limit decompression bomb protection to a generous but finite size
+Image.MAX_IMAGE_PIXELS = 100_000_000
 
 from svg_renderer import render_svg_to_bytes
-from r2_storage import upload_png_and_jpeg
+from local_storage import save_png_and_jpeg
 from jobs import Job
 
 # Namespaces
@@ -30,32 +31,17 @@ NSMAP = {
     "xlink": XLINK_NS,
 }
 
-# Size definitions (width_mm, height_mm, is_circular)
-SIZES = {
-    "saville": (115, 95, False),
-    "dick": (140, 90, False),
-    "barzan": (194, 143, False),
-    "dracula": (95, 95, True),
-    "baby_jesus": (290, 190, False),
-}
-
 COLORS = ["silver", "gold", "white"]
 LAYOUT_MODES = ["A", "B", "C", "D", "E", "F"]
 
-# Template sign positions (extracted from SVG structure)
-TEMPLATE_SIGN_BOUNDS = {
-    "saville": (30, 24, 93, 73),
-    "dick": (25, 30, 110, 60),
-    "barzan": (25, 25, 164, 113),
-    "dracula": (37, 27, 85, 85),
-    "baby_jesus": (25, 25, 240, 140),
-}
 
-# Peel and stick template has different sign positions for baby_jesus only
-# Other sizes work correctly with the main template bounds
-PEEL_AND_STICK_SIGN_BOUNDS = {
-    "baby_jesus": (8, 120, 130, 85),
-}
+def _get_blank(slug: str) -> dict:
+    """Load a single blank from the DB. Raises KeyError if not found."""
+    from models import Blank
+    blank = Blank.get(slug)
+    if blank is None:
+        raise KeyError(f"Unknown blank: {slug!r}. Add it via the Blanks admin page.")
+    return blank
 
 FONTS = {
     "arial_bold": ("Arial", "bold"),
@@ -143,22 +129,22 @@ def _load_layout_bounds():
 
 
 def _get_sign_bounds(size: str, orientation: str = "landscape", template_type: str = "main") -> SignBounds:
-    """Get the drawable bounds for a sign size."""
-    width_mm, height_mm, is_circular = SIZES[size]
+    """Get the drawable bounds for a sign blank, loaded from the DB."""
+    blank = _get_blank(size)
+    is_circular = bool(blank["is_circular"])
 
-    # Use peel_and_stick specific bounds if available
-    if template_type == "peel_and_stick" and size in PEEL_AND_STICK_SIGN_BOUNDS:
-        sign_x, sign_y, sign_w, sign_h = PEEL_AND_STICK_SIGN_BOUNDS[size]
-    elif size in TEMPLATE_SIGN_BOUNDS:
-        sign_x, sign_y, sign_w, sign_h = TEMPLATE_SIGN_BOUNDS[size]
+    if template_type == "peel_and_stick" and blank["peel_x"] is not None:
+        sign_x = blank["peel_x"]
+        sign_y = blank["peel_y"]
+        sign_w = blank["peel_w"]
+        sign_h = blank["peel_h"]
     else:
-        margin = 20
-        sign_x = margin
-        sign_y = margin
-        sign_w = width_mm - 2 * margin
-        sign_h = height_mm - 2 * margin
+        sign_x = blank["sign_x"]
+        sign_y = blank["sign_y"]
+        sign_w = blank["sign_w"]
+        sign_h = blank["sign_h"]
 
-    if size == "baby_jesus" and orientation == "portrait":
+    if blank.get("has_portrait") and orientation == "portrait":
         sign_w, sign_h = sign_h, sign_w
 
     return SignBounds(
@@ -424,20 +410,22 @@ def generate_product_image(product: dict, template_type: str = "main") -> bytes:
     icon_offset_y = float(product.get("icon_offset_y", 0.0) or 0.0)
     font = product.get("font", "arial_heavy")
     
-    # Build template filename
-    if size == "baby_jesus" and orientation == "portrait":
+    # Build template filename — use portrait variant if the blank supports it
+    blank = _get_blank(size)
+    use_portrait = blank.get("has_portrait") and orientation == "portrait"
+    if use_portrait:
         template_name = f"{color}_{size}_portrait_{template_type}.svg"
     else:
         template_name = f"{color}_{size}_{template_type}.svg"
-    
+
     template_path = ASSETS_DIR / template_name
     if not template_path.exists():
         raise FileNotFoundError(f"Template not found: {template_path}")
-    
+
     # Parse template
     tree = etree.parse(str(template_path))
     root = tree.getroot()
-    
+
     # For 'rear' template type, do NOT inject icons or text - just render the template as-is
     # The rear image shows the 3M adhesive backing without any product graphics
     if template_type == "rear":
@@ -513,39 +501,33 @@ def generate_product_image_preview(product: dict) -> bytes:
     font = product.get("font", "arial_heavy")
     
     # Build template filename
-    if size == "baby_jesus" and orientation == "portrait":
-        template_name = f"{color}_{size}_portrait_main.svg"
-    else:
-        template_name = f"{color}_{size}_main.svg"
-    
+    blank = _get_blank(size)
+    use_portrait = blank.get("has_portrait") and orientation == "portrait"
+    template_name = f"{color}_{size}_portrait_main.svg" if use_portrait else f"{color}_{size}_main.svg"
+
     template_path = ASSETS_DIR / template_name
     if not template_path.exists():
         raise FileNotFoundError(f"Template not found: {template_path}")
-    
-    # Parse template
+
     tree = etree.parse(str(template_path))
     root = tree.getroot()
-    
-    # Get bounds and calculate layout
+
     bounds = _get_sign_bounds(size, orientation)
     layout = _calculate_layout(
         bounds, layout_mode, len(icon_files), text_lines,
         icon_scale, text_scale, size, orientation, "main"
     )
-    
-    # Apply QA position offsets to icon position
+
     final_icon_x = layout.icon_x + icon_offset_x
     final_icon_y = layout.icon_y + icon_offset_y
-    
-    # Inject icons
+
     for icon_file in icon_files:
         icon_type, icon_data = _load_icon(icon_file)
         if icon_type == "svg":
             _inject_icon(root, icon_data, final_icon_x, final_icon_y, layout.icon_width, layout.icon_height)
         elif icon_type == "png":
             _inject_png_icon(root, icon_data, final_icon_x, final_icon_y, layout.icon_width, layout.icon_height)
-    
-    # Add text elements
+
     font_family, font_weight = FONTS.get(font, ("Arial", "bold"))
     for text_elem in layout.text_elements:
         _add_text_element(
@@ -553,11 +535,9 @@ def generate_product_image_preview(product: dict) -> bytes:
             text_elem["font_size"], text_elem.get("anchor", "middle"),
             font_family, font_weight
         )
-    
-    # Convert to string and render at LOW resolution (scale=1)
+
     svg_content = etree.tostring(root, encoding="unicode")
     png_bytes = render_svg_to_bytes(svg_content, scale=1, transparent=False, full_page=False)
-    
     return png_bytes
 
 
@@ -596,12 +576,9 @@ def generate_transparent_product_image(product: dict) -> bytes:
     icon_offset_y = float(product.get("icon_offset_y", 0.0) or 0.0)
     font = product.get("font", "arial_heavy")
     
-    # Load the main template (same as generate_product_image with template_type="main")
-    # Build template filename using same logic as generate_product_image
-    if size == "baby_jesus" and orientation == "portrait":
-        template_name = f"{color}_{size}_portrait_main.svg"
-    else:
-        template_name = f"{color}_{size}_main.svg"
+    blank = _get_blank(size)
+    use_portrait = blank.get("has_portrait") and orientation == "portrait"
+    template_name = f"{color}_{size}_portrait_main.svg" if use_portrait else f"{color}_{size}_main.svg"
     
     template_path = ASSETS_DIR / template_name
     if not template_path.exists():
@@ -691,19 +668,13 @@ def generate_master_svg_for_product(product: dict) -> bytes:
     icon_offset_y = float(product.get("icon_offset_y", 0.0) or 0.0)
     font = product.get("font", "arial_heavy")
     
-    # Use master_design_file template
-    if size == "baby_jesus" and orientation == "portrait":
-        template_name = f"{color}_{size}_portrait_master_design_file.svg"
-    else:
-        template_name = f"{color}_{size}_master_design_file.svg"
-    
+    blank = _get_blank(size)
+    use_portrait = blank.get("has_portrait") and orientation == "portrait"
+    sfx = "_portrait" if use_portrait else ""
+    template_name = f"{color}_{size}{sfx}_master_design_file.svg"
     template_path = ASSETS_DIR / template_name
     if not template_path.exists():
-        # Fall back to main template if master doesn't exist
-        if size == "baby_jesus" and orientation == "portrait":
-            template_name = f"{color}_{size}_portrait_main.svg"
-        else:
-            template_name = f"{color}_{size}_main.svg"
+        template_name = f"{color}_{size}{sfx}_main.svg"
         template_path = ASSETS_DIR / template_name
     
     if not template_path.exists():
@@ -745,43 +716,37 @@ def generate_master_svg_for_product(product: dict) -> bytes:
     return etree.tostring(root, encoding="utf-8", xml_declaration=True)
 
 
-def generate_images_job(job: Job, products: list[dict], upload_to_r2: bool = True) -> dict:
+def generate_images_job(job: Job, products: list[dict]) -> dict:
     """
-    Background job to generate images for multiple products.
-    
+    Background job to generate images for multiple products and save locally.
+
     Args:
-        job: Job object for progress updates
-        products: List of product dicts
-        upload_to_r2: Whether to upload to R2 storage
-    
+        job: Job object for progress updates.
+        products: List of product dicts.
+
     Returns:
-        Dict with results per product
+        Dict with results per product.
     """
     job.total = len(products)
     results = {}
-    
+
     for i, product in enumerate(products):
         m_number = product["m_number"]
         job.message = f"Generating images for {m_number}..."
         job.progress = i
-        
+
         try:
             images = generate_all_images_for_product(product)
-            
-            if upload_to_r2 and images:
-                urls = {}
-                for img_type, png_bytes in images.items():
-                    key = f"{m_number}/{m_number}_{img_type}"
-                    png_url, jpeg_url = upload_png_and_jpeg(png_bytes, key)
-                    urls[img_type] = {"png": png_url, "jpeg": jpeg_url}
-                results[m_number] = {"success": True, "urls": urls}
-            else:
-                results[m_number] = {"success": True, "images": len(images)}
-                
+            urls = {}
+            for img_type, png_bytes in images.items():
+                key = f"{m_number}/{m_number}_{img_type}"
+                png_url, jpeg_url = save_png_and_jpeg(png_bytes, key)
+                urls[img_type] = {"png": png_url, "jpeg": jpeg_url}
+            results[m_number] = {"success": True, "urls": urls}
         except Exception as e:
             logging.error(f"Failed to generate images for {m_number}: {e}")
             results[m_number] = {"success": False, "error": str(e)}
-    
+
     job.progress = job.total
     job.message = f"Completed {len(products)} products"
     return results

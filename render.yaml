@@ -1,33 +1,43 @@
 services:
   - type: web
-    name: signmaker
+    name: render
     env: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
+    domains:
+      - render.nbnesigns.co.uk
+    disk:
+      name: images
+      mountPath: /mnt/images
+      sizeGB: 10
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.0
       - key: DATABASE_URL
         fromDatabase:
-          name: signmaker-db
+          name: render-db
           property: connectionString
+      - key: IMAGES_DIR
+        value: /mnt/images
+      - key: PUBLIC_BASE_URL
+        value: https://render.nbnesigns.co.uk
+      - key: APP_TOKEN
+        sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: OPENAI_API_KEY
         sync: false
-      - key: R2_ACCOUNT_ID
+      - key: EBAY_CLIENT_ID
         sync: false
-      - key: R2_ACCESS_KEY_ID
+      - key: EBAY_CLIENT_SECRET
         sync: false
-      - key: R2_SECRET_ACCESS_KEY
+      - key: EBAY_RU_NAME
         sync: false
-      - key: R2_BUCKET_NAME
-        sync: false
-      - key: R2_PUBLIC_URL
-        sync: false
+      - key: EBAY_ENVIRONMENT
+        value: PRODUCTION
+      - key: EBAY_MERCHANT_LOCATION_KEY
+        value: default
       - key: SECRET_KEY
         generateValue: true
 
 databases:
-  - name: signmaker-db
+  - name: render-db
     plan: free
