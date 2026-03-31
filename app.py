@@ -933,6 +933,7 @@ def publish_to_ebay():
 def flatfile_preview():
     """Return Amazon flatfile data as JSON for preview table."""
     import os
+    from config import PUBLIC_BASE_URL
     
     all_products = Product.all()
     if not all_products:

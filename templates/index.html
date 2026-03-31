@@ -446,14 +446,14 @@
                     <span id="lifestyle-status" style="margin-top: 10px; display: block; font-size: 12px;"></span>
                 </div>
                 
-                <!-- Step 2a: Upload Images to R2 -->
+                <!-- Step 2a: Save Images to Server -->
                 <div style="background: #fff3cd; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                    <h3 style="margin: 0 0 10px 0;">☁️ Step 2a: Upload Images to R2</h3>
+                    <h3 style="margin: 0 0 10px 0;">🖼️ Step 2a: Save Images to Server</h3>
                     <p style="font-size: 12px; color: #666; margin-bottom: 10px;">
-                        Generate all product images and upload to R2 for marketplace URLs.
+                        Generate all product images and save to the server. Marketplace image URLs will point to render.nbnesigns.co.uk.
                     </p>
                     <button class="btn btn-warning" onclick="uploadImagesToR2()" id="btn-upload-r2" style="padding: 10px 20px;">
-                        ☁️ Upload Images to R2
+                        🖼️ Save Images to Server
                     </button>
                     <br><span id="r2-upload-status" style="margin-top: 10px; display: inline-block; font-size: 12px;"></span>
                 </div>
@@ -502,8 +502,11 @@
                         <button class="btn btn-warning" onclick="exportAmazonFlatfile()" id="btn-export-amazon" style="padding: 10px 20px;">
                             📦 Generate Amazon Flatfile
                         </button>
-                        <button class="btn btn-primary" onclick="publishToEbay()" id="btn-export-ebay" style="padding: 10px 20px;">
-                            🛒 Publish to eBay (with Ads)
+                        <button class="btn btn-primary" onclick="downloadEbayFile()" id="btn-download-ebay" style="padding: 10px 20px;">
+                            🛒 Download eBay CSV
+                        </button>
+                        <button class="btn btn-outline-primary" onclick="publishToEbay()" id="btn-export-ebay" style="padding: 10px 20px;">
+                            🛒 Publish to eBay API
                         </button>
                         <button class="btn btn-danger" onclick="exportEtsyFile()" id="btn-export-etsy" style="padding: 10px 20px;">
                             🧡 Generate Etsy File
@@ -516,6 +519,7 @@
                     <!-- Download buttons for generated files -->
                     <div id="download-buttons" style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
                         <button class="btn btn-outline-primary" onclick="downloadAmazonFlatfile()">📥 Download Amazon Flatfile</button>
+                        <button class="btn btn-outline-primary" onclick="downloadEbayFile()">📥 Download eBay CSV</button>
                         <button class="btn btn-outline-warning" onclick="downloadEtsyFile()">📥 Download Etsy File</button>
                     </div>
                 </div>
@@ -2480,21 +2484,21 @@ Use Cases: ${useCases}
             const btn = document.getElementById('btn-upload-r2');
             const status = document.getElementById('r2-upload-status');
             btn.disabled = true;
-            btn.innerHTML = '⏳ Uploading...';
+            btn.innerHTML = '⏳ Saving images...';
             status.textContent = '';
-            exportLog('Uploading images to R2...');
-            
+            exportLog('Saving images to server (this may take a few minutes for large batches)...');
+
             try {
                 const resp = await fetch('/api/upload-images-to-r2', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'}
                 });
                 const data = await resp.json();
-                
+
                 if (data.success) {
-                    status.textContent = `✓ Uploaded ${data.total_uploaded} images for ${data.products} products to R2!`;
+                    status.textContent = `✓ Saved ${data.total_uploaded} images for ${data.products} products to server`;
                     status.style.color = 'green';
-                    exportLog(`Uploaded ${data.total_uploaded} images to R2`, 'success');
+                    exportLog(`Saved ${data.total_uploaded} images to server`, 'success');
                     if (data.errors && data.errors.length > 0) {
                         exportLog(`Errors: ${data.errors.join(', ')}`, 'error');
                     }
@@ -2504,12 +2508,43 @@ Use Cases: ${useCases}
                     exportLog(`Error: ${data.error}`, 'error');
                 }
             } catch (e) {
-                status.textContent = 'Error uploading images';
+                status.textContent = 'Error saving images';
                 status.style.color = 'red';
                 exportLog(`Error: ${e.message}`, 'error');
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = '☁️ Upload Images to R2';
+                btn.innerHTML = '🖼️ Save Images to Server';
+            }
+        }
+
+        async function downloadEbayFile() {
+            const btn = document.getElementById('btn-download-ebay');
+            const status = document.getElementById('export-all-status');
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Generating...';
+            exportLog('Generating eBay File Exchange CSV...');
+            try {
+                const resp = await fetch('/api/export/ebay', {method: 'POST'});
+                if (!resp.ok) { throw new Error(`Server error ${resp.status}`); }
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `ebay_listings_${new Date().toISOString().slice(0,10)}.csv`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                status.textContent = '✓ eBay CSV downloaded';
+                status.style.color = 'green';
+                exportLog('eBay CSV downloaded — upload via Seller Hub > File Exchange', 'success');
+            } catch(e) {
+                status.textContent = `Error: ${e.message}`;
+                status.style.color = 'red';
+                exportLog(`eBay CSV error: ${e.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '🛒 Download eBay CSV';
             }
         }
         
