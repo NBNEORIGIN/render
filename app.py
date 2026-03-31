@@ -1547,28 +1547,41 @@ def save_product_images():
     ]
 
     from local_storage import save_image as save_to_disk
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     total_saved = 0
     errors = []
 
-    for product in products:
+    def _render_one(product, img_type, img_num):
         m_number = product["m_number"]
-        for img_type, img_num in IMAGE_TYPES:
+        png_bytes = generate_product_image(product, img_type)
+        img = Image.open(BytesIO(png_bytes))
+        if img.mode == "RGBA":
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            bg.paste(img, mask=img.split()[3])
+            img = bg
+        else:
+            img = img.convert("RGB")
+        MAX_DIM = 2000
+        if img.width > MAX_DIM or img.height > MAX_DIM:
+            ratio = min(MAX_DIM / img.width, MAX_DIM / img.height)
+            img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
+        buf = BytesIO()
+        img.save(buf, "JPEG", quality=85)
+        save_to_disk(buf.getvalue(), f"{m_number}/{m_number}-{img_num}.jpg", "image/jpeg")
+        return m_number, img_type
+
+    tasks = [
+        (product, img_type, img_num)
+        for product in products
+        for img_type, img_num in IMAGE_TYPES
+    ]
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = {pool.submit(_render_one, p, t, n): (p["m_number"], t) for p, t, n in tasks}
+        for fut in as_completed(futures):
+            m_number, img_type = futures[fut]
             try:
-                png_bytes = generate_product_image(product, img_type)
-                img = Image.open(BytesIO(png_bytes))
-                if img.mode == "RGBA":
-                    bg = Image.new("RGB", img.size, (255, 255, 255))
-                    bg.paste(img, mask=img.split()[3])
-                    img = bg
-                else:
-                    img = img.convert("RGB")
-                MAX_DIM = 2000
-                if img.width > MAX_DIM or img.height > MAX_DIM:
-                    ratio = min(MAX_DIM / img.width, MAX_DIM / img.height)
-                    img = img.resize((int(img.width * ratio), int(img.height * ratio)), Image.LANCZOS)
-                buf = BytesIO()
-                img.save(buf, "JPEG", quality=85)
-                save_to_disk(buf.getvalue(), f"{m_number}/{m_number}-{img_num}.jpg", "image/jpeg")
+                fut.result()
                 total_saved += 1
             except Exception as e:
                 errors.append(f"{m_number} {img_type}: {e}")

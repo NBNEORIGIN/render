@@ -1,31 +1,28 @@
 """SVG to PNG renderer using Playwright (headless Chromium).
 
-Thread-safe implementation using a dedicated rendering thread.
-All Playwright operations run on a single thread to avoid cross-thread issues.
+Parallel implementation using a thread-pool where each worker owns its own
+browser instance. This avoids cross-thread Playwright issues while allowing
+multiple renders to run concurrently.
 """
 import tempfile
 import threading
-import queue
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, Future
 from playwright.sync_api import sync_playwright
 
-# Single-threaded executor for all Playwright operations
-_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="playwright")
-_browser = None
-_playwright_instance = None
-_initialized = False
-_init_lock = threading.Lock()
+# Each worker thread owns its own Playwright + browser instance
+_thread_local = threading.local()
+_WORKERS = 4
+_executor = ThreadPoolExecutor(max_workers=_WORKERS, thread_name_prefix="playwright")
 
 
 def _ensure_browser():
-    """Ensure browser is initialized (called within executor thread)."""
-    global _browser, _playwright_instance, _initialized
-    if not _initialized:
-        _playwright_instance = sync_playwright().start()
-        _browser = _playwright_instance.chromium.launch()
-        _initialized = True
-    return _browser
+    """Get or create the browser for the current worker thread."""
+    if not getattr(_thread_local, 'initialized', False):
+        _thread_local.playwright = sync_playwright().start()
+        _thread_local.browser = _thread_local.playwright.chromium.launch()
+        _thread_local.initialized = True
+    return _thread_local.browser
 
 
 def _render_svg_impl(svg_content: str, scale: int, transparent: bool = False, full_page: bool = False) -> bytes:
@@ -108,21 +105,28 @@ def _render_svg_file_impl(svg_path: Path, scale: int) -> bytes:
     return png_bytes
 
 
+def _shutdown_thread_browser():
+    """Close the browser owned by the current worker thread (called inside executor)."""
+    if getattr(_thread_local, 'initialized', False):
+        try:
+            _thread_local.browser.close()
+        except Exception:
+            pass
+        try:
+            _thread_local.playwright.stop()
+        except Exception:
+            pass
+        _thread_local.initialized = False
+
+
 def close_browser():
-    """Close browser and shutdown executor."""
-    global _browser, _playwright_instance, _initialized
-    
-    def _shutdown():
-        global _browser, _playwright_instance, _initialized
-        if _browser:
-            _browser.close()
-            _browser = None
-        if _playwright_instance:
-            _playwright_instance.stop()
-            _playwright_instance = None
-        _initialized = False
-    
-    _executor.submit(_shutdown).result(timeout=10)
+    """Close all worker browsers and shutdown executor."""
+    futures = [_executor.submit(_shutdown_thread_browser) for _ in range(_WORKERS)]
+    for f in futures:
+        try:
+            f.result(timeout=10)
+        except Exception:
+            pass
 
 
 def render_svg_to_png(svg_content: str, output_path: Path, scale: int = 4) -> Path:
