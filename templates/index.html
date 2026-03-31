@@ -1237,37 +1237,60 @@
             }
         }
         
+        function parseCsvLine(line) {
+            // Handles quoted fields containing commas
+            const result = [];
+            let cur = '', inQuote = false;
+            for (let i = 0; i < line.length; i++) {
+                const ch = line[i];
+                if (ch === '"') {
+                    if (inQuote && line[i+1] === '"') { cur += '"'; i++; }
+                    else inQuote = !inQuote;
+                } else if (ch === ',' && !inQuote) {
+                    result.push(cur.trim()); cur = '';
+                } else {
+                    cur += ch;
+                }
+            }
+            result.push(cur.trim());
+            return result;
+        }
+
         async function importCsvFile(file) {
             const status = document.getElementById('import-status');
             status.innerHTML += `<span style="color: #0ff;">📋 Importing ${file.name}...</span><br>`;
-            
+
             try {
                 const text = await file.text();
-                const lines = text.trim().split(/\\r?\\n/);
-                const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-                
-                let imported = 0;
+                const lines = text.trim().split(/\r?\n/);
+                if (lines.length < 2) {
+                    status.innerHTML += `<span style="color: orange;">⚠️ ${file.name}: no data rows found</span><br>`;
+                    return;
+                }
+                const headers = parseCsvLine(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9_]/g, '_'));
+
+                let imported = 0, skipped = 0;
                 for (let i = 1; i < lines.length; i++) {
-                    const values = lines[i].split(',').map(v => v.trim());
-                    if (values.length < 2) continue;
-                    
+                    if (!lines[i].trim()) continue;
+                    const values = parseCsvLine(lines[i]);
+
                     const product = {};
                     headers.forEach((h, idx) => {
-                        if (values[idx]) product[h] = values[idx];
+                        if (values[idx] !== undefined && values[idx] !== '') product[h] = values[idx];
                     });
-                    
-                    if (!product.m_number) continue;
-                    
-                    // Create product via API
-                    await fetch('/api/products', {
+
+                    if (!product.m_number) { skipped++; continue; }
+
+                    const resp = await fetch('/api/products', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify(product)
                     });
-                    imported++;
+                    if (resp.ok || resp.status === 409) imported++;
+                    else skipped++;
                 }
-                
-                status.innerHTML += `<span style="color: #0f0;">✅ Imported ${imported} products from ${file.name}</span><br>`;
+
+                status.innerHTML += `<span style="color: #0f0;">✅ Imported ${imported} products from ${file.name}${skipped ? ` (${skipped} skipped)` : ''}</span><br>`;
                 loadProducts();
             } catch (e) {
                 status.innerHTML += `<span style="color: red;">❌ Error importing ${file.name}: ${e.message}</span><br>`;
