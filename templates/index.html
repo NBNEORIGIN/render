@@ -2749,24 +2749,28 @@ Use Cases: ${useCases}
             btn.innerHTML = '⏳ Generating ZIP...';
             status.textContent = '';
             exportLog('Generating M Number folders ZIP...');
-            
+
             try {
                 const resp = await fetch('/api/export/m-folders', {method: 'POST'});
-                const data = await resp.json();
-                
-                if (data.success) {
-                    // Trigger download
-                    window.location.href = `/api/export/m-folders/download?file=${encodeURIComponent(data.file_path)}`;
-                    status.textContent = '✓ Download started!';
-                    status.style.color = 'green';
-                    exportLog(`ZIP created: ${data.file_name}`, 'success');
-                } else {
-                    status.textContent = `Error: ${data.error}`;
-                    status.style.color = 'red';
-                    exportLog(`Error: ${data.error}`, 'error');
+                if (!resp.ok) {
+                    let msg = 'Failed to generate ZIP';
+                    try { const d = await resp.json(); msg = d.error || msg; } catch {}
+                    throw new Error(msg);
                 }
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `m_number_folders_${new Date().toISOString().slice(0,10)}.zip`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                status.textContent = '✓ Download started!';
+                status.style.color = 'green';
+                exportLog('ZIP downloaded successfully', 'success');
             } catch (e) {
-                status.textContent = 'Error generating ZIP';
+                status.textContent = `Error: ${e.message}`;
                 status.style.color = 'red';
                 exportLog(`Error: ${e.message}`, 'error');
             } finally {

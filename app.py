@@ -1497,56 +1497,31 @@ def open_folder():
 
 @app.route('/api/export/m-folders', methods=['POST'])
 def export_m_folders_json():
-    """Generate M Number folders ZIP and return JSON with file path."""
+    """Generate M Number folders ZIP and stream it directly to the browser."""
     import logging
     from datetime import datetime
+    from io import BytesIO
     from export_images import generate_m_number_folder_zip
-    
+
     products = Product.approved()
     if not products:
         products = Product.all()
-    
+
     if not products:
         return jsonify({"success": False, "error": "No products found"}), 400
-    
+
     try:
         zip_bytes = generate_m_number_folder_zip(products)
-        
-        # Save to file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-        output_path = Path(__file__).parent / f"m_number_folders_{timestamp}.zip"
-        with open(output_path, 'wb') as f:
-            f.write(zip_bytes)
-        
-        return jsonify({
-            "success": True,
-            "file_path": str(output_path),
-            "file_name": output_path.name,
-            "product_count": len(products)
-        })
-        
+        return send_file(
+            BytesIO(zip_bytes),
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f"m_number_folders_{timestamp}.zip"
+        )
     except Exception as e:
         logging.error(f"Failed to generate M folders ZIP: {e}")
         return jsonify({"success": False, "error": str(e)}), 500
-
-
-@app.route('/api/export/m-folders/download')
-def download_m_folders():
-    """Download the generated M folders ZIP file."""
-    import tempfile
-    file_path = request.args.get('file')
-    if not file_path:
-        return "File not specified", 400
-
-    # Path traversal guard — only files inside the system temp directory are allowed
-    allowed_dir = Path(tempfile.gettempdir()).resolve()
-    path = (allowed_dir / Path(file_path).name).resolve()
-    if not str(path).startswith(str(allowed_dir)):
-        return "Access denied", 403
-    if not path.exists():
-        return "File not found", 404
-
-    return send_file(path, mimetype='application/zip', as_attachment=True, download_name=path.name)
 
 
 @app.route('/api/upload-images-to-r2', methods=['POST'])
