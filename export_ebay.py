@@ -33,20 +33,22 @@ MOUNTING_INFO = {
 }
 
 
-def generate_ebay_csv(products: list[dict], r2_public_url: str = "") -> str:
+def generate_ebay_csv(products: list[dict], base_url: str = "") -> str:
     """
     Generate eBay File Exchange compatible CSV.
-    
+
     Args:
         products: List of product dicts from database
-        r2_public_url: Base URL for R2 images
-    
+        base_url: Base URL for product images (e.g. https://render.nbnesigns.co.uk)
+
     Returns:
         CSV string
     """
     output = io.StringIO()
-    
-    # eBay File Exchange headers
+
+    # eBay File Exchange headers.
+    # PayPal columns removed — eBay UK switched to Managed Payments in Oct 2021;
+    # including PayPalAccepted/PayPalEmailAddress causes upload rejection.
     headers = [
         "Action(SiteID=UK)",
         "ItemID",
@@ -59,8 +61,6 @@ def generate_ebay_csv(products: list[dict], r2_public_url: str = "") -> str:
         "StartPrice",
         "Format",
         "Duration",
-        "PayPalAccepted",
-        "PayPalEmailAddress",
         "ShippingType",
         "ShippingService-1:Option",
         "ShippingService-1:Cost",
@@ -75,26 +75,26 @@ def generate_ebay_csv(products: list[dict], r2_public_url: str = "") -> str:
         "*C:Colour",
         "*C:Size",
     ]
-    
+
     writer = csv.DictWriter(output, fieldnames=headers)
     writer.writeheader()
-    
+
     for product in products:
         m_number = product.get("m_number", "")
         description = product.get("description", "")
         size = product.get("size", "dracula").lower()
         color = product.get("color", "silver").lower()
         mounting = product.get("mounting_type", "self_adhesive")
-        
+
         size_info = SIZE_CONFIG.get(size, SIZE_CONFIG["dracula"])
         color_display = COLOR_DISPLAY.get(color, "Silver")
         mounting_display = MOUNTING_INFO.get(mounting, "Self Adhesive")
-        
+
         # Build title
         title = f"{description} Sign - {size_info['display']} Aluminium {mounting_display}"
         if len(title) > 80:
             title = title[:77] + "..."
-        
+
         # Build description HTML
         desc_html = f"""<p><strong>{description}</strong></p>
 <p>Premium quality aluminium sign with UV-resistant printing.</p>
@@ -105,12 +105,19 @@ def generate_ebay_csv(products: list[dict], r2_public_url: str = "") -> str:
 <li>Mounting: {mounting_display}</li>
 <li>Weatherproof and durable</li>
 </ul>"""
-        
-        # Image URL
+
+        # Image URLs — files are at /images/{m_number}/{m_number}-001.jpg
+        # eBay supports multiple images separated by |
         pic_url = ""
-        if r2_public_url:
-            pic_url = f"{r2_public_url}/{m_number}/{m_number}_main.jpg"
-        
+        if base_url:
+            base = base_url.rstrip("/")
+            pic_url = "|".join([
+                f"{base}/images/{m_number}/{m_number}-001.jpg",
+                f"{base}/images/{m_number}/{m_number}-002.jpg",
+                f"{base}/images/{m_number}/{m_number}-003.jpg",
+                f"{base}/images/{m_number}/{m_number}-004.jpg",
+            ])
+
         row = {
             "Action(SiteID=UK)": "Add",
             "ItemID": "",
@@ -123,8 +130,6 @@ def generate_ebay_csv(products: list[dict], r2_public_url: str = "") -> str:
             "StartPrice": str(size_info["price"]),
             "Format": "FixedPrice",
             "Duration": "GTC",
-            "PayPalAccepted": "1",
-            "PayPalEmailAddress": "",
             "ShippingType": "Flat",
             "ShippingService-1:Option": "UK_RoyalMailSecondClassStandard",
             "ShippingService-1:Cost": "0",
@@ -139,7 +144,7 @@ def generate_ebay_csv(products: list[dict], r2_public_url: str = "") -> str:
             "*C:Colour": color_display,
             "*C:Size": size_info["display"],
         }
-        
+
         writer.writerow(row)
     
     return output.getvalue()
