@@ -125,7 +125,17 @@ def get_product(m_number):
 def update_product(m_number):
     data = request.json
     print(f"PATCH {m_number}: {data}")  # Debug logging
+
+    # Check if this PATCH is changing qa_status to approved
+    old_product = Product.get(m_number)
+    was_approved = old_product and old_product.get('qa_status') == 'approved'
+
     Product.update(m_number, data)
+
+    # Auto-publish on QA approval
+    if (data.get('qa_status') == 'approved' and not was_approved):
+        _trigger_auto_publish(m_number)
+
     return jsonify({"success": True})
 
 
@@ -2056,6 +2066,72 @@ While doing: {context or '(not specified)'}
         return jsonify({"error": "mail failed"}), 500
 
 
+# ── Auto-publish on QA approval ─────────────────────────────────────────────────
+
+def _trigger_auto_publish(m_number: str):
+    """Fire-and-forget publish to Etsy + Phloe shop when a product is QA-approved."""
+    product = Product.get(m_number)
+    if not product or product.get('qa_status') != 'approved':
+        return
+
+    # Load AI content
+    content = None
+    conn = get_db()
+    try:
+        cur = dict_cursor(conn)
+        cur.execute(
+            "SELECT title, description, bullet_points, search_terms "
+            "FROM render_product_content WHERE product_id = %s "
+            "ORDER BY created_at DESC LIMIT 1",
+            (product['id'],)
+        )
+        row = cur.fetchone()
+        if row:
+            content = dict(row)
+    finally:
+        release_db(conn)
+
+    content_map = {m_number: content} if content else {}
+
+    # Publish to Etsy (background job)
+    def _etsy_publish():
+        try:
+            from etsy_api import publish_products_to_etsy
+            results = publish_products_to_etsy([product], content_map)
+            _log_publish_results(results, 'etsy')
+            app.logger.info("Auto-published %s to Etsy: %s", m_number,
+                            results[0].get('status') if results else 'no result')
+        except Exception as e:
+            app.logger.error("Auto-publish %s to Etsy failed: %s", m_number, e)
+            _log_publish_results([{
+                'm_number': m_number, 'listing_id': None,
+                'status': 'failed', 'error': str(e),
+            }], 'etsy')
+
+    # Publish to Phloe shop (background job)
+    def _phloe_publish():
+        try:
+            from phloe_publisher import push_product_to_phloe
+            result = push_product_to_phloe(product, content)
+            _log_publish_results([{
+                'm_number': m_number,
+                'listing_id': result.get('product_id'),
+                'status': result['status'],
+                'error': result.get('error'),
+            }], 'phloe')
+            app.logger.info("Auto-published %s to Phloe: %s", m_number, result['status'])
+        except Exception as e:
+            app.logger.error("Auto-publish %s to Phloe failed: %s", m_number, e)
+            _log_publish_results([{
+                'm_number': m_number, 'listing_id': None,
+                'status': 'failed', 'error': str(e),
+            }], 'phloe')
+
+    # Submit as background jobs so the PATCH response isn't blocked
+    submit_job(f"Etsy publish {m_number}", _etsy_publish)
+    submit_job(f"Phloe publish {m_number}", _phloe_publish)
+
+
 # ── Etsy OAuth ──────────────────────────────────────────────────────────────────
 
 @app.route('/etsy/oauth/connect')
@@ -2179,6 +2255,63 @@ def etsy_publish_status():
         return jsonify([dict(r) for r in cur.fetchall()])
     finally:
         release_db(conn)
+
+
+@app.route('/api/phloe/publish', methods=['POST'])
+def phloe_publish():
+    """Publish QA-approved products to Phloe shop (app.nbnesigns.co.uk/shop).
+
+    Body: { "m_numbers": ["M1001", "M1002"] } or { "all_approved": true }
+    """
+    from phloe_publisher import push_products_to_phloe
+
+    data = request.json or {}
+    m_numbers = data.get('m_numbers', [])
+    all_approved = data.get('all_approved', False)
+
+    if all_approved:
+        products = Product.approved()
+    elif m_numbers:
+        products = [p for p in [Product.get(m) for m in m_numbers] if p]
+    else:
+        return jsonify({"error": "Provide m_numbers list or all_approved: true"}), 400
+
+    if not products:
+        return jsonify({"error": "No products found"}), 404
+
+    # Load AI content
+    content_map = {}
+    conn = get_db()
+    try:
+        cur = dict_cursor(conn)
+        for p in products:
+            cur.execute(
+                "SELECT title, description, bullet_points, search_terms "
+                "FROM render_product_content WHERE product_id = %s "
+                "ORDER BY created_at DESC LIMIT 1",
+                (p['id'],)
+            )
+            row = cur.fetchone()
+            if row:
+                content_map[p['m_number']] = dict(row)
+    finally:
+        release_db(conn)
+
+    results = push_products_to_phloe(products, content_map)
+
+    # Log results
+    for r in results:
+        _log_publish_results([{
+            'm_number': r['m_number'],
+            'listing_id': r.get('product_id'),
+            'status': r['status'],
+            'error': r.get('error'),
+        }], 'phloe')
+
+    published = sum(1 for r in results if r['status'] == 'success')
+    failed = sum(1 for r in results if r['status'] == 'failed')
+
+    return jsonify({"published": published, "failed": failed, "results": results})
 
 
 def _log_publish_results(results: list[dict], channel: str):
