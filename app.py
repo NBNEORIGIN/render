@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from config import SECRET_KEY, COLORS, BRAND_NAME, IMAGES_DIR
-from models import init_db, Product, Blank, User, SalesImport, SalesData
+from models import init_db, get_db, release_db, dict_cursor, Product, Blank, User, SalesImport, SalesData
 from jobs import submit_job, get_job, get_all_jobs, job_to_dict, start_workers
 
 app = Flask(__name__)
@@ -19,7 +19,7 @@ app.secret_key = SECRET_KEY
 
 # ── Authentication ─────────────────────────────────────────────────────────────
 _PUBLIC_PATHS = {"/health", "/favicon.ico"}
-_PUBLIC_PREFIXES = ("/login", "/static/", "/images/")
+_PUBLIC_PREFIXES = ("/login", "/static/", "/images/", "/etsy/oauth/")
 
 LOGIN_HTML = """<!DOCTYPE html>
 <html><head><title>Render — Login</title>
@@ -2054,6 +2054,200 @@ While doing: {context or '(not specified)'}
     except Exception as e:
         app.logger.error("Bug report email failed: %s", e)
         return jsonify({"error": "mail failed"}), 500
+
+
+# ── Etsy OAuth ──────────────────────────────────────────────────────────────────
+
+@app.route('/etsy/oauth/connect')
+def etsy_oauth_connect():
+    """Start Etsy OAuth PKCE flow — redirects to Etsy consent page."""
+    try:
+        from etsy_auth import get_etsy_auth_from_env
+        auth = get_etsy_auth_from_env()
+        auth_url, code_verifier = auth.start_oauth_flow(state="etsy_render")
+        session['etsy_code_verifier'] = code_verifier
+        return redirect(auth_url)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/etsy/oauth/callback')
+def etsy_oauth_callback():
+    """Handle Etsy OAuth callback — exchange code for tokens."""
+    from etsy_auth import get_etsy_auth_from_env
+
+    code = request.args.get('code')
+    error = request.args.get('error')
+    if error:
+        return jsonify({"error": error, "description": request.args.get('error_description')}), 400
+    if not code:
+        return jsonify({"error": "No authorization code received"}), 400
+
+    code_verifier = session.pop('etsy_code_verifier', None)
+    if not code_verifier:
+        return jsonify({"error": "No code verifier in session — restart OAuth flow"}), 400
+
+    try:
+        auth = get_etsy_auth_from_env()
+        auth.exchange_code_for_tokens(code, code_verifier)
+        return redirect('/?etsy_connected=1')
+    except Exception as e:
+        app.logger.error("Etsy OAuth token exchange failed: %s", e)
+        return jsonify({"error": f"Token exchange failed: {e}"}), 500
+
+
+@app.route('/etsy/oauth/status')
+def etsy_oauth_status():
+    """Check Etsy OAuth connection status."""
+    try:
+        from etsy_auth import get_etsy_auth_from_env
+        auth = get_etsy_auth_from_env()
+        return jsonify(auth.get_status())
+    except ValueError:
+        return jsonify({"connected": False, "error": "Etsy API credentials not configured"})
+
+
+# ── Etsy Publish ────────────────────────────────────────────────────────────────
+
+@app.route('/api/etsy/publish', methods=['POST'])
+def etsy_publish():
+    """Publish QA-approved products to Etsy as draft listings.
+
+    Body: { "m_numbers": ["M1001", "M1002"] } or { "all_approved": true }
+    """
+    from etsy_api import publish_products_to_etsy
+
+    data = request.json or {}
+    m_numbers = data.get('m_numbers', [])
+    all_approved = data.get('all_approved', False)
+
+    if all_approved:
+        products = Product.approved()
+    elif m_numbers:
+        products = [p for p in [Product.get(m) for m in m_numbers] if p]
+    else:
+        return jsonify({"error": "Provide m_numbers list or all_approved: true"}), 400
+
+    if not products:
+        return jsonify({"error": "No products found"}), 404
+
+    # Load AI content for each product
+    content_map = {}
+    conn = get_db()
+    try:
+        cur = dict_cursor(conn)
+        for p in products:
+            cur.execute(
+                "SELECT title, description, bullet_points, search_terms "
+                "FROM render_product_content WHERE product_id = %s "
+                "ORDER BY created_at DESC LIMIT 1",
+                (p['id'],)
+            )
+            row = cur.fetchone()
+            if row:
+                content_map[p['m_number']] = dict(row)
+    finally:
+        release_db(conn)
+
+    dry_run = data.get('dry_run', False)
+    results = publish_products_to_etsy(products, content_map, dry_run=dry_run)
+
+    # Log publish results
+    if not dry_run:
+        _log_publish_results(results, 'etsy')
+
+    published = sum(1 for r in results if r['status'] == 'success')
+    failed = sum(1 for r in results if r['status'] == 'failed')
+
+    return jsonify({
+        "published": published,
+        "failed": failed,
+        "results": results,
+    })
+
+
+@app.route('/api/etsy/publish/status')
+def etsy_publish_status():
+    """Get recent Etsy publish log entries."""
+    conn = get_db()
+    try:
+        cur = dict_cursor(conn)
+        cur.execute(
+            "SELECT * FROM render_publish_log WHERE channel = 'etsy' "
+            "ORDER BY published_at DESC LIMIT 50"
+        )
+        return jsonify([dict(r) for r in cur.fetchall()])
+    finally:
+        release_db(conn)
+
+
+def _log_publish_results(results: list[dict], channel: str):
+    """Write publish results to render_publish_log."""
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+        for r in results:
+            cur.execute(
+                "INSERT INTO render_publish_log (m_number, channel, status, external_id, error_message) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (r['m_number'], channel, r['status'],
+                 str(r.get('listing_id', '')) if r.get('listing_id') else None,
+                 r.get('error')),
+            )
+    finally:
+        release_db(conn)
+
+
+# ── Cairn Context Endpoint ──────────────────────────────────────────────────────
+
+@app.route('/api/cairn/context')
+def cairn_context():
+    """Expose Render state to Cairn business brain."""
+    conn = get_db()
+    try:
+        cur = dict_cursor(conn)
+
+        cur.execute("SELECT COUNT(*) as n FROM render_products")
+        total = dict(cur.fetchone())['n']
+
+        cur.execute("SELECT COUNT(*) as n FROM render_products WHERE qa_status = 'approved'")
+        approved = dict(cur.fetchone())['n']
+
+        cur.execute("SELECT COUNT(*) as n FROM render_products WHERE qa_status = 'pending'")
+        pending = dict(cur.fetchone())['n']
+
+        cur.execute(
+            "SELECT channel, COUNT(*) as n FROM render_publish_log "
+            "WHERE status = 'success' GROUP BY channel"
+        )
+        publish_counts = {dict(r)['channel']: dict(r)['n'] for r in cur.fetchall()}
+
+        cur.execute(
+            "SELECT m_number, channel, status, published_at FROM render_publish_log "
+            "ORDER BY published_at DESC LIMIT 10"
+        )
+        recent = [dict(r) for r in cur.fetchall()]
+        for r in recent:
+            if hasattr(r.get('published_at'), 'isoformat'):
+                r['published_at'] = r['published_at'].isoformat()
+
+        return jsonify({
+            "module": "render",
+            "generated_at": datetime.utcnow().isoformat(),
+            "products": {
+                "total": total,
+                "approved": approved,
+                "pending_qa": pending,
+            },
+            "publishing": publish_counts,
+            "recent_activity": recent,
+            "summary": (
+                f"{total} products ({approved} approved, {pending} pending QA). "
+                f"Published: {publish_counts}."
+            ),
+        })
+    finally:
+        release_db(conn)
 
 
 if __name__ == '__main__':

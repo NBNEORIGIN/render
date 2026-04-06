@@ -1,62 +1,47 @@
-"""Database models for Render."""
+"""Database models for Render.
+
+All tables use the `render_` prefix to namespace within Cairn's shared PostgreSQL.
+PostgreSQL only — SQLite fallback removed (Cairn PG on nbne1 is the sole target).
+"""
 import json
 import os
 from pathlib import Path
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+import psycopg2
+from psycopg2 import pool
+from psycopg2.extras import RealDictCursor
 
-P = "%s" if DATABASE_URL.startswith("postgres") else "?"  # SQL placeholder
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cairn:cairn_nbne_2026@192.168.1.228:5432/claw")
+
+P = "%s"  # SQL placeholder (PostgreSQL only)
 
 
 def get_placeholder():
     return P
 
 
-if DATABASE_URL.startswith("postgres"):
-    import psycopg2
-    from psycopg2 import pool
-    from psycopg2.extras import RealDictCursor
-
-    _connection_pool = None
-
-    def _get_pool():
-        global _connection_pool
-        if _connection_pool is None:
-            _connection_pool = pool.SimpleConnectionPool(minconn=2, maxconn=10, dsn=DATABASE_URL)
-        return _connection_pool
-
-    def get_db():
-        conn = _get_pool().getconn()
-        conn.autocommit = True
-        return conn
-
-    def release_db(conn):
-        _get_pool().putconn(conn)
-
-    def dict_cursor(conn):
-        return conn.cursor(cursor_factory=RealDictCursor)
-
-else:
-    import sqlite3
-
-    DB_PATH = Path(__file__).parent / "render.db"
-
-    def get_db():
-        conn = sqlite3.connect(str(DB_PATH))
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def release_db(conn):
-        conn.close()
-
-    def dict_cursor(conn):
-        return conn.cursor()
+_connection_pool = None
 
 
-def _commit(conn):
-    """Commit only for SQLite; PostgreSQL runs with autocommit."""
-    if not DATABASE_URL.startswith("postgres"):
-        conn.commit()
+def _get_pool():
+    global _connection_pool
+    if _connection_pool is None:
+        _connection_pool = pool.SimpleConnectionPool(minconn=2, maxconn=10, dsn=DATABASE_URL)
+    return _connection_pool
+
+
+def get_db():
+    conn = _get_pool().getconn()
+    conn.autocommit = True
+    return conn
+
+
+def release_db(conn):
+    _get_pool().putconn(conn)
+
+
+def dict_cursor(conn):
+    return conn.cursor(cursor_factory=RealDictCursor)
 
 
 def _alter_add(cur, table: str, column: str, col_type: str) -> None:
@@ -72,17 +57,14 @@ def _alter_add(cur, table: str, column: str, col_type: str) -> None:
 
 
 def init_db():
-    """Create or migrate all database tables."""
+    """Create or migrate all render_* database tables."""
     conn = get_db()
     cur = conn.cursor()
 
-    is_postgres = DATABASE_URL.startswith("postgres")
-    id_type = "SERIAL PRIMARY KEY" if is_postgres else "INTEGER PRIMARY KEY AUTOINCREMENT"
-
-    # ── blanks ───────────────────────────────────────────────────────────────
-    cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS blanks (
-            id {id_type},
+    # ── render_blanks ────────────────────────────────────────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS render_blanks (
+            id SERIAL PRIMARY KEY,
             slug TEXT UNIQUE NOT NULL,
             display TEXT NOT NULL,
             width_mm REAL NOT NULL,
@@ -103,10 +85,10 @@ def init_db():
         )
     """)
 
-    # ── products ─────────────────────────────────────────────────────────────
-    cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS products (
-            id {id_type},
+    # ── render_products ──────────────────────────────────────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS render_products (
+            id SERIAL PRIMARY KEY,
             m_number TEXT UNIQUE NOT NULL,
             description TEXT,
             size TEXT,
@@ -134,15 +116,14 @@ def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    # Backfill columns added after initial release
     for col, typ in [("ai_theme", "TEXT"), ("ai_use_cases", "TEXT"), ("ai_content", "TEXT")]:
-        _alter_add(cur, "products", col, typ)
+        _alter_add(cur, "render_products", col, typ)
 
-    # ── product_content ───────────────────────────────────────────────────────
-    cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS product_content (
-            id {id_type},
-            product_id INTEGER REFERENCES products(id),
+    # ── render_product_content ───────────────────────────────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS render_product_content (
+            id SERIAL PRIMARY KEY,
+            product_id INTEGER REFERENCES render_products(id),
             title TEXT,
             description TEXT,
             bullet_points TEXT,
@@ -151,21 +132,21 @@ def init_db():
         )
     """)
 
-    # ── product_images ────────────────────────────────────────────────────────
-    cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS product_images (
-            id {id_type},
-            product_id INTEGER REFERENCES products(id),
+    # ── render_product_images ────────────────────────────────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS render_product_images (
+            id SERIAL PRIMARY KEY,
+            product_id INTEGER REFERENCES render_products(id),
             image_type TEXT,
             url TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
 
-    # ── batches ───────────────────────────────────────────────────────────────
-    cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS batches (
-            id {id_type},
+    # ── render_batches ───────────────────────────────────────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS render_batches (
+            id SERIAL PRIMARY KEY,
             name TEXT,
             status TEXT DEFAULT 'pending',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -173,10 +154,10 @@ def init_db():
         )
     """)
 
-    # ── users ─────────────────────────────────────────────────────────────────
-    cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS users (
-            id {id_type},
+    # ── render_users ─────────────────────────────────────────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS render_users (
+            id SERIAL PRIMARY KEY,
             email TEXT UNIQUE NOT NULL,
             name TEXT NOT NULL,
             password_hash TEXT NOT NULL,
@@ -185,10 +166,10 @@ def init_db():
         )
     """)
 
-    # ── sales_imports ─────────────────────────────────────────────────────────
-    cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS sales_imports (
-            id          {id_type},
+    # ── render_sales_imports ─────────────────────────────────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS render_sales_imports (
+            id          SERIAL PRIMARY KEY,
             filename    TEXT,
             report_start TEXT,
             report_end  TEXT,
@@ -198,10 +179,10 @@ def init_db():
         )
     """)
 
-    # ── sales_data ────────────────────────────────────────────────────────────
-    cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS sales_data (
-            id          {id_type},
+    # ── render_sales_data ────────────────────────────────────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS render_sales_data (
+            id          SERIAL PRIMARY KEY,
             import_id   INTEGER,
             asin        TEXT,
             parent_asin TEXT,
@@ -216,10 +197,24 @@ def init_db():
             report_end  TEXT
         )
     """)
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_sales_sku  ON sales_data(sku)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_sales_asin ON sales_data(asin)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_render_sales_sku  ON render_sales_data(sku)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_render_sales_asin ON render_sales_data(asin)")
 
-    _commit(conn)
+    # ── render_publish_log ───────────────────────────────────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS render_publish_log (
+            id              SERIAL PRIMARY KEY,
+            m_number        TEXT NOT NULL,
+            channel         TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'pending',
+            external_id     TEXT,
+            error_message   TEXT,
+            published_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_render_publish_m ON render_publish_log(m_number)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_render_publish_channel ON render_publish_log(channel)")
+
     release_db(conn)
 
     # Seed blanks and users
@@ -228,13 +223,13 @@ def init_db():
 
 
 def _seed_blanks():
-    """Populate the blanks table from BLANK_SEEDS if it has no rows."""
+    """Populate render_blanks from BLANK_SEEDS if it has no rows."""
     from config import BLANK_SEEDS
 
     conn = get_db()
     try:
         cur = dict_cursor(conn)
-        cur.execute("SELECT COUNT(*) as n FROM blanks")
+        cur.execute("SELECT COUNT(*) as n FROM render_blanks")
         row = dict(cur.fetchone())
         if row["n"] > 0:
             return
@@ -242,14 +237,14 @@ def _seed_blanks():
         cur2 = conn.cursor()
         for i, (slug, b) in enumerate(BLANK_SEEDS.items()):
             peel = b.get("peel_bounds")
-            cur2.execute(f"""
-                INSERT INTO blanks
+            cur2.execute("""
+                INSERT INTO render_blanks
                     (slug, display, width_mm, height_mm, is_circular, amazon_code,
                      sign_x, sign_y, sign_w, sign_h,
                      peel_x, peel_y, peel_w, peel_h,
                      has_portrait, active, sort_order)
                 VALUES
-                    ({P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P})
+                    (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """, (
                 slug, b["display"], b["width_mm"], b["height_mm"],
                 1 if b["is_circular"] else 0, b["amazon_code"],
@@ -259,30 +254,28 @@ def _seed_blanks():
                 peel[2] if peel else None, peel[3] if peel else None,
                 1 if b["has_portrait"] else 0, 1, i,
             ))
-        _commit(conn)
     finally:
         release_db(conn)
 
 
 def _seed_users():
-    """Populate the users table with the default NBNE team if empty."""
+    """Populate render_users with the default NBNE team if empty."""
     from werkzeug.security import generate_password_hash
     from config import DEFAULT_USERS
 
     conn = get_db()
     try:
         cur = dict_cursor(conn)
-        cur.execute("SELECT COUNT(*) as n FROM users")
+        cur.execute("SELECT COUNT(*) as n FROM render_users")
         if dict(cur.fetchone())["n"] > 0:
             return
         cur2 = conn.cursor()
         for email, name in DEFAULT_USERS.items():
             from config import DEFAULT_PASSWORD
             cur2.execute(
-                f"INSERT INTO users (email, name, password_hash) VALUES ({P},{P},{P})",
+                "INSERT INTO render_users (email, name, password_hash) VALUES (%s,%s,%s)",
                 (email, name, generate_password_hash(DEFAULT_PASSWORD)),
             )
-        _commit(conn)
     finally:
         release_db(conn)
 
@@ -297,7 +290,7 @@ class User:
         conn = get_db()
         try:
             cur = dict_cursor(conn)
-            cur.execute(f"SELECT * FROM users WHERE email = {P} AND active = 1", (email.lower().strip(),))
+            cur.execute("SELECT * FROM render_users WHERE email = %s AND active = 1", (email.lower().strip(),))
             row = cur.fetchone()
             if row:
                 u = dict(row)
@@ -312,7 +305,7 @@ class User:
         conn = get_db()
         try:
             cur = dict_cursor(conn)
-            cur.execute(f"SELECT * FROM users WHERE email = {P}", (email.lower().strip(),))
+            cur.execute("SELECT * FROM render_users WHERE email = %s", (email.lower().strip(),))
             row = cur.fetchone()
             return dict(row) if row else None
         finally:
@@ -323,7 +316,7 @@ class User:
         conn = get_db()
         try:
             cur = dict_cursor(conn)
-            cur.execute("SELECT id, email, name, active, created_at FROM users ORDER BY name")
+            cur.execute("SELECT id, email, name, active, created_at FROM render_users ORDER BY name")
             return [dict(r) for r in cur.fetchall()]
         finally:
             release_db(conn)
@@ -335,7 +328,7 @@ class User:
         try:
             cur = conn.cursor()
             cur.execute(
-                f"UPDATE users SET password_hash = {P} WHERE email = {P}",
+                "UPDATE render_users SET password_hash = %s WHERE email = %s",
                 (generate_password_hash(password), email.lower().strip()),
             )
             _commit(conn)
@@ -349,7 +342,7 @@ class User:
         try:
             cur = conn.cursor()
             cur.execute(
-                f"INSERT INTO users (email, name, password_hash) VALUES ({P},{P},{P})",
+                "INSERT INTO render_users (email, name, password_hash) VALUES (%s,%s,%s)",
                 (email.lower().strip(), name, generate_password_hash(password)),
             )
             _commit(conn)
@@ -368,9 +361,9 @@ class Blank:
         try:
             cur = dict_cursor(conn)
             if active_only:
-                cur.execute("SELECT * FROM blanks WHERE active=1 ORDER BY sort_order, slug")
+                cur.execute("SELECT * FROM render_blanks WHERE active=1 ORDER BY sort_order, slug")
             else:
-                cur.execute("SELECT * FROM blanks ORDER BY sort_order, slug")
+                cur.execute("SELECT * FROM render_blanks ORDER BY sort_order, slug")
             return [dict(r) for r in cur.fetchall()]
         finally:
             release_db(conn)
@@ -380,7 +373,7 @@ class Blank:
         conn = get_db()
         try:
             cur = dict_cursor(conn)
-            cur.execute(f"SELECT * FROM blanks WHERE slug = {P}", (slug,))
+            cur.execute("SELECT * FROM render_blanks WHERE slug = %s", (slug,))
             row = cur.fetchone()
             return dict(row) if row else None
         finally:
@@ -392,13 +385,13 @@ class Blank:
         try:
             cur = conn.cursor()
             peel = data.get("peel_bounds")
-            cur.execute(f"""
-                INSERT INTO blanks
+            cur.execute("""
+                INSERT INTO render_blanks
                     (slug, display, width_mm, height_mm, is_circular, amazon_code,
                      sign_x, sign_y, sign_w, sign_h,
                      peel_x, peel_y, peel_w, peel_h,
                      has_portrait, active, sort_order)
-                VALUES ({P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P})
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """, (
                 data["slug"], data["display"], data["width_mm"], data["height_mm"],
                 1 if data.get("is_circular") else 0, data.get("amazon_code"),
@@ -427,13 +420,13 @@ class Blank:
             }
             for k, v in data.items():
                 if k in allowed:
-                    fields.append(f"{k} = {P}")
+                    fields.append(f"{k} = %s")
                     values.append(v)
             if not fields:
                 return
             values.append(slug)
             cur.execute(
-                f"UPDATE blanks SET {', '.join(fields)} WHERE slug = {P}",
+                f"UPDATE render_blanks SET {', '.join(fields)} WHERE slug = %s",
                 tuple(values),
             )
             _commit(conn)
@@ -485,7 +478,7 @@ class Product:
         conn = get_db()
         try:
             cur = dict_cursor(conn)
-            cur.execute("SELECT * FROM products ORDER BY m_number")
+            cur.execute("SELECT * FROM render_products ORDER BY m_number")
             return [Product._ensure_ean_string(dict(r)) for r in cur.fetchall()]
         finally:
             release_db(conn)
@@ -495,7 +488,7 @@ class Product:
         conn = get_db()
         try:
             cur = dict_cursor(conn)
-            cur.execute(f"SELECT * FROM products WHERE m_number = {P}", (m_number,))
+            cur.execute(f"SELECT * FROM render_products WHERE m_number ={P}", (m_number,))
             row = cur.fetchone()
             return Product._ensure_ean_string(dict(row)) if row else None
         finally:
@@ -506,7 +499,7 @@ class Product:
         conn = get_db()
         try:
             cur = dict_cursor(conn)
-            cur.execute("SELECT * FROM products WHERE qa_status = 'approved' ORDER BY m_number")
+            cur.execute("SELECT * FROM render_products WHERE qa_status = 'approved' ORDER BY m_number")
             return [Product._ensure_ean_string(dict(r)) for r in cur.fetchall()]
         finally:
             release_db(conn)
@@ -516,12 +509,12 @@ class Product:
         conn = get_db()
         try:
             cur = conn.cursor()
-            cur.execute(f"""
-                INSERT INTO products (m_number, description, size, color, layout_mode,
+            cur.execute("""
+                INSERT INTO render_products (m_number, description, size, color, layout_mode,
                     icon_files, text_line_1, text_line_2, text_line_3, orientation,
                     font, material, mounting_type, ean, qa_status,
                     icon_scale, text_scale, icon_offset_x, icon_offset_y)
-                VALUES ({P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P})
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """, (
                 data.get("m_number"), data.get("description"), data.get("size"),
                 data.get("color"), data.get("layout_mode", "A"), data.get("icon_files"),
@@ -544,14 +537,14 @@ class Product:
             fields, values = [], []
             for k, v in data.items():
                 # Allow explicit None to clear a field by using a sentinel check
-                fields.append(f"{k} = {P}")
+                fields.append(f"{k} = %s")
                 values.append(v)
             if not fields:
                 return
             fields.append("updated_at = CURRENT_TIMESTAMP")
             values.append(m_number)
             cur.execute(
-                f"UPDATE products SET {', '.join(fields)} WHERE m_number = {P}",
+                f"UPDATE render_products SET {', '.join(fields)} WHERE m_number = %s",
                 tuple(values),
             )
             _commit(conn)
@@ -563,7 +556,7 @@ class Product:
         conn = get_db()
         try:
             cur = conn.cursor()
-            cur.execute(f"DELETE FROM products WHERE m_number = {P}", (m_number,))
+            cur.execute("DELETE FROM render_products WHERE m_number = %s", (m_number,))
             _commit(conn)
         finally:
             release_db(conn)
@@ -573,7 +566,7 @@ class Product:
         conn = get_db()
         try:
             cur = conn.cursor()
-            cur.execute("DELETE FROM products")
+            cur.execute("DELETE FROM render_products")
             _commit(conn)
         finally:
             release_db(conn)
@@ -586,15 +579,11 @@ class SalesImport:
         try:
             cur = conn.cursor()
             cur.execute(
-                f"INSERT INTO sales_imports (filename, report_start, report_end, row_count, imported_by)"
-                f" VALUES ({P},{P},{P},{P},{P})",
+                "INSERT INTO render_sales_imports (filename, report_start, report_end, row_count, imported_by)"
+                " VALUES (%s,%s,%s,%s,%s)",
                 (filename, report_start, report_end, row_count, imported_by),
             )
-            _commit(conn)
-            if DATABASE_URL.startswith("postgres"):
-                cur.execute("SELECT lastval()")
-            else:
-                cur.execute("SELECT last_insert_rowid()")
+            cur.execute("SELECT lastval()")
             return cur.fetchone()[0]
         finally:
             release_db(conn)
@@ -604,7 +593,7 @@ class SalesImport:
         conn = get_db()
         try:
             cur = dict_cursor(conn)
-            cur.execute("SELECT * FROM sales_imports ORDER BY imported_at DESC")
+            cur.execute("SELECT * FROM render_sales_imports ORDER BY imported_at DESC")
             return [dict(r) for r in cur.fetchall()]
         finally:
             release_db(conn)
@@ -616,7 +605,7 @@ class SalesImport:
         try:
             cur = conn.cursor()
             cur.execute(
-                f"SELECT id FROM sales_imports WHERE report_start={P} AND report_end={P}",
+                "SELECT id FROM render_sales_imports WHERE report_start=%s AND report_end=%s",
                 (report_start, report_end),
             )
             return cur.fetchone() is not None
@@ -635,9 +624,9 @@ class SalesData:
             cur = conn.cursor()
             for r in rows:
                 cur.execute(
-                    f"INSERT INTO sales_data"
-                    f" (import_id,asin,parent_asin,sku,title,sessions,units,revenue,cvr,buy_box_pct,report_start,report_end)"
-                    f" VALUES ({P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P},{P})",
+                    "INSERT INTO render_sales_data"
+                    " (import_id,asin,parent_asin,sku,title,sessions,units,revenue,cvr,buy_box_pct,report_start,report_end)"
+                    " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                     (
                         r["import_id"], r["asin"], r["parent_asin"], r["sku"], r["title"],
                         r["sessions"], r["units"], r["revenue"], r["cvr"], r["buy_box_pct"],
@@ -664,7 +653,7 @@ class SalesData:
                          THEN ROUND(CAST(SUM(units)*100.0/SUM(sessions) AS NUMERIC), 1)
                          ELSE 0 END AS blended_cvr,
                     COUNT(DISTINCT import_id) AS import_count
-                FROM sales_data
+                FROM render_sales_data
                 WHERE units >= {min_units}
                 GROUP BY sku, parent_asin, title
                 ORDER BY total_revenue DESC
@@ -684,7 +673,7 @@ class SalesData:
                 SELECT sku, title, SUM(units) AS units, SUM(revenue) AS revenue,
                        CASE WHEN SUM(sessions)>0
                             THEN ROUND(CAST(SUM(units)*100.0/SUM(sessions) AS NUMERIC),1) ELSE 0 END AS cvr
-                FROM sales_data
+                FROM render_sales_data
                 GROUP BY sku, title
                 ORDER BY revenue DESC
             """)
@@ -699,7 +688,7 @@ class SalesData:
         try:
             cur = dict_cursor(conn)
             cur.execute(
-                f"SELECT * FROM sales_data WHERE sku={P} ORDER BY report_end DESC", (sku,)
+                "SELECT * FROM render_sales_data WHERE sku=%s ORDER BY report_end DESC", (sku,)
             )
             return [dict(r) for r in cur.fetchall()]
         finally:

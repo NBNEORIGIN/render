@@ -5,8 +5,8 @@ from pathlib import Path
 # Base directory
 BASE_DIR = Path(__file__).parent
 
-# Database
-DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{BASE_DIR / 'render.db'}")
+# Database — Cairn PostgreSQL on nbne1 (render_ prefixed tables in claw DB)
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://cairn:cairn_nbne_2026@192.168.1.228:5432/claw")
 
 # API Keys
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -91,6 +91,20 @@ COLORS = {
     "gold": "Gold",
     "white": "White",
 }
+
+# Etsy API
+ETSY_API_KEY = os.environ.get("ETSY_API_KEY", "")
+ETSY_SHARED_SECRET = os.environ.get("ETSY_SHARED_SECRET", "")
+ETSY_SHOP_ID = int(os.environ.get("ETSY_SHOP_ID", "11706740"))
+ETSY_REDIRECT_URI = os.environ.get("ETSY_REDIRECT_URI", "http://localhost:5000/etsy/oauth/callback")
+ETSY_TAXONOMY_ID = 2844              # Signs category
+ETSY_SHIPPING_PROFILE_ID = 208230423243
+ETSY_RETURN_POLICY_ID = 1074420280634
+
+# Phloe shop integration
+PHLOE_API_URL = os.environ.get("PHLOE_API_URL", "https://app.nbnesigns.co.uk")
+PHLOE_TENANT_SLUG = os.environ.get("PHLOE_TENANT_SLUG", "mind-department")
+PHLOE_API_TOKEN = os.environ.get("PHLOE_API_TOKEN", "")
 
 # Brand
 BRAND_NAME = "NorthByNorthEast"
