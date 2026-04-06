@@ -1,26 +1,11 @@
 services:
-  db:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: render
-      POSTGRES_USER: nbne
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nbne -d render"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   app:
     build: .
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8025:5000"
+      - "127.0.0.1:8003:5000"
     environment:
-      DATABASE_URL: postgres://nbne:${DB_PASSWORD}@db:5432/render
+      DATABASE_URL: ${DATABASE_URL:-postgresql://cairn:cairn_nbne_2026@host.docker.internal:5432/claw}
       SECRET_KEY: ${SECRET_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
@@ -35,12 +20,15 @@ services:
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USER: ${SMTP_USER}
       SMTP_PASSWORD: ${SMTP_PASSWORD}
+      ETSY_API_KEY: ${ETSY_API_KEY}
+      ETSY_SHARED_SECRET: ${ETSY_SHARED_SECRET}
+      ETSY_SHOP_ID: ${ETSY_SHOP_ID:-11706740}
+      ETSY_REDIRECT_URI: ${ETSY_REDIRECT_URI:-https://render.nbnesigns.co.uk/etsy/oauth/callback}
+      PHLOE_API_URL: ${PHLOE_API_URL:-https://app.nbnesigns.co.uk}
+      PHLOE_TENANT_SLUG: ${PHLOE_TENANT_SLUG:-mind-department}
+      PHLOE_USERNAME: ${PHLOE_USERNAME}
+      PHLOE_PASSWORD: ${PHLOE_PASSWORD}
     volumes:
-      - images:/images
-    depends_on:
-      db:
-        condition: service_healthy
-
-volumes:
-  pgdata:
-  images:
+      - /data/render/images:/images
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
