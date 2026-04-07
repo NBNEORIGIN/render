@@ -1047,6 +1047,7 @@ def download_amazon_flatfile():
     from datetime import datetime
     import openpyxl
     from openpyxl.utils import get_column_letter
+    from config import PUBLIC_BASE_URL
     
     data = request.json or {}
     theme = data.get('theme', '')
