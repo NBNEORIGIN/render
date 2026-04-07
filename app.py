@@ -19,7 +19,7 @@ app.secret_key = SECRET_KEY
 
 # ── Authentication ─────────────────────────────────────────────────────────────
 _PUBLIC_PATHS = {"/health", "/favicon.ico"}
-_PUBLIC_PREFIXES = ("/login", "/static/", "/images/", "/etsy/oauth/")
+_PUBLIC_PREFIXES = ("/login", "/static/", "/images/", "/etsy/oauth/", "/ebay/oauth/")
 
 LOGIN_HTML = """<!DOCTYPE html>
 <html><head><title>Render — Login</title>
@@ -2182,6 +2182,52 @@ def etsy_oauth_status():
         return jsonify(auth.get_status())
     except ValueError:
         return jsonify({"connected": False, "error": "Etsy API credentials not configured"})
+
+
+# ── eBay OAuth ───────────────────────────────────────────────────────────────────
+
+@app.route('/ebay/oauth/connect')
+def ebay_oauth_connect():
+    """Start eBay OAuth flow — redirects to eBay consent page."""
+    try:
+        from ebay_auth import get_ebay_auth_from_env
+        auth = get_ebay_auth_from_env()
+        auth_url = auth.get_authorization_url(state="ebay_render")
+        return redirect(auth_url)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/ebay/oauth/callback')
+def ebay_oauth_callback():
+    """Handle eBay OAuth callback — exchange code for tokens."""
+    from ebay_auth import get_ebay_auth_from_env
+
+    code = request.args.get('code')
+    error = request.args.get('error')
+    if error:
+        return jsonify({"error": error}), 400
+    if not code:
+        return jsonify({"error": "No authorization code received"}), 400
+
+    try:
+        auth = get_ebay_auth_from_env()
+        auth.exchange_code_for_tokens(code)
+        return redirect('/?ebay_connected=1')
+    except Exception as e:
+        app.logger.error("eBay OAuth token exchange failed: %s", e)
+        return jsonify({"error": f"Token exchange failed: {e}"}), 500
+
+
+@app.route('/ebay/oauth/status')
+def ebay_oauth_status():
+    """Check eBay OAuth connection status."""
+    try:
+        from ebay_auth import get_ebay_auth_from_env
+        auth = get_ebay_auth_from_env()
+        return jsonify(auth.get_status())
+    except ValueError:
+        return jsonify({"connected": False, "error": "eBay API credentials not configured"})
 
 
 # ── Etsy Publish ────────────────────────────────────────────────────────────────

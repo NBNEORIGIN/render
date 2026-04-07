@@ -213,6 +213,20 @@ class EbayAuth:
             "Accept": "application/json",
         }
     
+    def get_status(self) -> dict:
+        """Return connection status for the web UI."""
+        tokens = self._load_tokens()
+        if not tokens:
+            return {"connected": False, "reason": "No tokens — complete OAuth flow"}
+        if tokens.is_expired():
+            # Try refresh
+            try:
+                tokens = self.refresh_access_token(tokens.refresh_token)
+                return {"connected": True, "expires_at": time.ctime(tokens.expires_at)}
+            except Exception as e:
+                return {"connected": False, "reason": f"Token refresh failed: {e}"}
+        return {"connected": True, "expires_at": time.ctime(tokens.expires_at)}
+
     def run_manual_oauth_flow(self) -> EbayTokens:
         auth_url = self.get_authorization_url()
         
@@ -249,7 +263,7 @@ def get_ebay_auth_from_env(token_file: Path = None) -> EbayAuth:
     client_id = os.environ.get("EBAY_CLIENT_ID")
     client_secret = os.environ.get("EBAY_CLIENT_SECRET")
     ru_name = os.environ.get("EBAY_RU_NAME")
-    environment = os.environ.get("EBAY_ENVIRONMENT", "production")
+    environment = os.environ.get("EBAY_ENVIRONMENT", "production").lower()
     
     if not all([client_id, client_secret, ru_name]):
         missing = []
