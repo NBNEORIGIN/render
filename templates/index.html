@@ -592,6 +592,7 @@
                             </div>
                             <div class="channel-actions">
                                 <button class="btn btn-primary" onclick="publishToEbay()" id="btn-export-ebay">Publish via API</button>
+                                <button class="btn btn-outline" onclick="downloadEbayFile()" id="btn-download-ebay">Download CSV</button>
                             </div>
                         </div>
 
@@ -603,6 +604,7 @@
                             </div>
                             <div class="channel-actions">
                                 <button class="btn btn-primary" onclick="publishToEtsy()" id="btn-publish-etsy">Publish via API</button>
+                                <button class="btn btn-outline" onclick="exportEtsyFile()" id="btn-download-etsy">Download XLSX</button>
                             </div>
                         </div>
                     </div>
@@ -2852,16 +2854,23 @@ Use Cases: ${useCases}
                 });
                 clearTimeout(timeout);
                 const data = await resp.json();
-                if (data.success) {
-                    progress.innerHTML += `✓ Etsy: ${data.count || 0} draft listing(s) created<br>`;
-                    status.textContent = '✓ Etsy listings published!';
-                    status.style.color = 'var(--green)';
-                    exportLog(`Etsy: ${data.count || 0} listings created`, 'success');
-                } else {
-                    progress.innerHTML += `⚠ Etsy: ${data.error || 'Unknown error'}<br>`;
+                if (data.error) {
+                    progress.innerHTML += `⚠ Etsy: ${data.error}<br>`;
                     status.textContent = `Etsy error: ${data.error}`;
                     status.style.color = 'var(--red)';
                     exportLog(`Etsy error: ${data.error}`, 'error');
+                } else {
+                    const published = data.published ?? 0;
+                    const failed = data.failed ?? 0;
+                    progress.innerHTML += `✓ Etsy: ${published} draft listing(s) created`;
+                    if (failed > 0) progress.innerHTML += `, ${failed} failed`;
+                    progress.innerHTML += `<br>`;
+                    status.textContent = `✓ Etsy: ${published} listing(s) published`;
+                    status.style.color = 'var(--green)';
+                    exportLog(`Etsy: ${published} listings created, ${failed} failed`, published > 0 ? 'success' : 'error');
+                    (data.results || []).filter(r => r.status === 'failed').forEach(r => {
+                        progress.innerHTML += `&nbsp;&nbsp;⚠ ${r.m_number}: ${r.error || 'unknown error'}<br>`;
+                    });
                 }
             } catch (e) {
                 const msg = e.name === 'AbortError' ? 'Request timed out' : e.message;
