@@ -194,11 +194,59 @@ class EtsyListingManager:
 
     def get_listing(self, listing_id: int) -> dict:
         """Get listing details."""
-        return self._request("GET", f"listings/{listing_id}")
+        url = f"{ETSY_API_BASE}/application/listings/{listing_id}"
+        return self._request("GET", url)
 
     def delete_listing(self, listing_id: int) -> dict:
         """Delete a listing."""
-        return self._request("DELETE", f"listings/{listing_id}")
+        url = f"{ETSY_API_BASE}/application/listings/{listing_id}"
+        return self._request("DELETE", url)
+
+    def update_listing_inventory(
+        self,
+        listing_id: int,
+        products: list[dict],
+        price_on_property: list[int] = None,
+        quantity_on_property: list[int] = None,
+        sku_on_property: list[int] = None,
+    ) -> dict:
+        """PUT full variation inventory for a listing.
+
+        This is a full replace — always send the complete products array.
+        Endpoint: PUT /v3/application/listings/{listing_id}/inventory
+        """
+        url = f"{ETSY_API_BASE}/application/listings/{listing_id}/inventory"
+        body = {
+            "products": products,
+            "price_on_property": price_on_property or [],
+            "quantity_on_property": quantity_on_property or [],
+            "sku_on_property": sku_on_property or [],
+        }
+        return self._request("PUT", url, data=body)
+
+    def bind_variation_images(self, listing_id: int, variation_images: list[dict]) -> dict:
+        """Bind variation property values to listing images.
+
+        POST /v3/application/shops/{shop_id}/listings/{listing_id}/variation-images
+        variation_images: [{property_id, value, image_id}, ...]
+        """
+        return self._request(
+            "POST",
+            f"listings/{listing_id}/variation-images",
+            data=variation_images,
+        )
+
+    def get_variation_images(self, listing_id: int) -> dict:
+        """GET current variation-image bindings."""
+        return self._request("GET", f"listings/{listing_id}/variation-images")
+
+    def get_draft_listings(self, limit: int = 100, offset: int = 0) -> dict:
+        """GET draft listings for the shop."""
+        return self._request(
+            "GET",
+            "listings",
+            params={"state": "draft", "limit": limit, "offset": offset},
+        )
 
 
 def publish_products_to_etsy(products: list[dict], content_map: dict = None,
