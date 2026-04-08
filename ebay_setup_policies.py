@@ -75,7 +75,9 @@ class EbayPoliciesManager:
     def _make_request(self, method: str, endpoint: str, data: Optional[dict] = None, params: Optional[dict] = None) -> dict:
         url = f"{self.base_url}/{endpoint}"
         headers = self.auth.get_auth_headers()
-        
+        # Required by eBay Account API — without this header GET requests return 400
+        headers["X-EBAY-C-MARKETPLACE-ID"] = self.marketplace_id
+
         response = requests.request(method, url, headers=headers, json=data, params=params)
         
         if response.status_code == 204:
