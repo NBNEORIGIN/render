@@ -1,11 +1,11 @@
 """eBay listing export generator.
 
-Generates eBay-compatible CSV from product database.
+Generates eBay Seller Hub bulk upload CSV (Reports tab format).
+This is the current supported format — File Exchange is deprecated.
+Upload via: Seller Hub → Listings → Bulk actions → Upload listings
 """
 import csv
 import io
-import logging
-from typing import Optional
 
 # eBay category for signs
 EBAY_CATEGORY_ID = "166675"
@@ -19,64 +19,59 @@ SIZE_CONFIG = {
     "baby_jesus": {"display": "29 x 19 cm", "price": 17.99},
 }
 
-# Color mappings
 COLOR_DISPLAY = {
     "silver": "Silver",
-    "gold": "Gold", 
+    "gold": "Gold",
     "white": "White",
-}
-
-# Mounting info
-MOUNTING_INFO = {
-    "self_adhesive": "Self Adhesive",
-    "screw_mount": "Screw Mount",
 }
 
 
 def generate_ebay_csv(products: list[dict], base_url: str = "") -> str:
     """
-    Generate eBay File Exchange compatible CSV.
+    Generate eBay Seller Hub bulk listing upload CSV.
 
-    Args:
-        products: List of product dicts from database
-        base_url: Base URL for product images (e.g. https://render.nbnesigns.co.uk)
-
-    Returns:
-        CSV string
+    Upload via Seller Hub → Listings → Bulk actions → Upload listings.
+    Template format matches eBay's current Seller Hub Reports tab.
     """
     output = io.StringIO()
 
-    # eBay File Exchange headers.
-    # PayPal columns removed — eBay UK switched to Managed Payments in Oct 2021;
-    # including PayPalAccepted/PayPalEmailAddress causes upload rejection.
+    # Seller Hub bulk upload format (current as of 2025)
     headers = [
-        "Action(SiteID=UK)",
+        "*Action",
         "ItemID",
-        "Category",
-        "Title",
-        "Description",
+        "*Title",
+        "*Category",
         "ConditionID",
+        "ConditionDescription",
+        "*Description",
         "PicURL",
-        "Quantity",
-        "StartPrice",
-        "Format",
-        "Duration",
-        "ShippingType",
+        "*Quantity",
+        "*StartPrice",
+        "*Currency",
+        "*Format",
+        "*Duration",
+        "BuyItNowPrice",
+        "*Location",
+        "*Country",
+        "PaymentInstructions",
+        "*DispatchTimeMax",
+        "*ReturnsAcceptedOption",
+        "ReturnsWithinOption",
+        "RefundOption",
+        "ShippingCostPaidByOption",
+        "*ShippingType",
         "ShippingService-1:Option",
         "ShippingService-1:Cost",
-        "DispatchTimeMax",
-        "ReturnsAcceptedOption",
-        "RefundOption",
-        "ReturnsWithinOption",
-        "ShippingCostPaidByOption",
-        "*C:Brand",
-        "*C:Material",
-        "*C:Type",
-        "*C:Colour",
-        "*C:Size",
+        "ShippingService-1:FreeShipping",
+        "C:Brand",
+        "C:Material",
+        "C:Colour",
+        "C:Size",
+        "C:Type",
+        "C:Mounting Type",
     ]
 
-    writer = csv.DictWriter(output, fieldnames=headers)
+    writer = csv.DictWriter(output, fieldnames=headers, extrasaction='ignore')
     writer.writeheader()
 
     for product in products:
@@ -84,30 +79,26 @@ def generate_ebay_csv(products: list[dict], base_url: str = "") -> str:
         description = product.get("description", "")
         size = product.get("size", "dracula").lower()
         color = product.get("color", "silver").lower()
-        mounting = product.get("mounting_type", "self_adhesive")
 
         size_info = SIZE_CONFIG.get(size, SIZE_CONFIG["dracula"])
         color_display = COLOR_DISPLAY.get(color, "Silver")
-        mounting_display = MOUNTING_INFO.get(mounting, "Self Adhesive")
 
-        # Build title
-        title = f"{description} Sign - {size_info['display']} Aluminium {mounting_display}"
+        title = f"{description} Sign - {size_info['display']} Brushed Aluminium Self-Adhesive"
         if len(title) > 80:
             title = title[:77] + "..."
 
-        # Build description HTML
-        desc_html = f"""<p><strong>{description}</strong></p>
-<p>Premium quality aluminium sign with UV-resistant printing.</p>
-<ul>
-<li>Size: {size_info['display']}</li>
-<li>Material: Brushed Aluminium</li>
-<li>Finish: {color_display}</li>
-<li>Mounting: {mounting_display}</li>
-<li>Weatherproof and durable</li>
-</ul>"""
+        desc_html = (
+            f"<p><strong>{description}</strong></p>"
+            f"<p>Premium quality brushed aluminium sign with UV-resistant printing.</p>"
+            f"<ul>"
+            f"<li>Size: {size_info['display']}</li>"
+            f"<li>Material: 1mm Brushed Aluminium</li>"
+            f"<li>Finish: {color_display}</li>"
+            f"<li>Mounting: Self-Adhesive (peel and stick)</li>"
+            f"<li>Fully weatherproof — indoor and outdoor use</li>"
+            f"</ul>"
+        )
 
-        # Image URLs — files are at /images/{m_number}/{m_number}-001.jpg
-        # eBay supports multiple images separated by |
         pic_url = ""
         if base_url:
             base = base_url.rstrip("/")
@@ -119,41 +110,40 @@ def generate_ebay_csv(products: list[dict], base_url: str = "") -> str:
             ])
 
         row = {
-            "Action(SiteID=UK)": "Add",
+            "*Action": "Add",
             "ItemID": "",
-            "Category": EBAY_CATEGORY_ID,
-            "Title": title,
-            "Description": desc_html,
-            "ConditionID": "1000",  # New
+            "*Title": title,
+            "*Category": EBAY_CATEGORY_ID,
+            "ConditionID": "1000",
+            "ConditionDescription": "New",
+            "*Description": desc_html,
             "PicURL": pic_url,
-            "Quantity": "10",
-            "StartPrice": str(size_info["price"]),
-            "Format": "FixedPrice",
-            "Duration": "GTC",
-            "ShippingType": "Flat",
-            "ShippingService-1:Option": "UK_RoyalMailSecondClassStandard",
-            "ShippingService-1:Cost": "0",
-            "DispatchTimeMax": "3",
-            "ReturnsAcceptedOption": "ReturnsAccepted",
-            "RefundOption": "MoneyBack",
+            "*Quantity": "10",
+            "*StartPrice": str(size_info["price"]),
+            "*Currency": "GBP",
+            "*Format": "FixedPrice",
+            "*Duration": "GTC",
+            "BuyItNowPrice": "",
+            "*Location": "Alnwick, Northumberland",
+            "*Country": "GB",
+            "PaymentInstructions": "",
+            "*DispatchTimeMax": "3",
+            "*ReturnsAcceptedOption": "ReturnsAccepted",
             "ReturnsWithinOption": "Days_30",
+            "RefundOption": "MoneyBack",
             "ShippingCostPaidByOption": "Buyer",
-            "*C:Brand": "NorthByNorthEast",
-            "*C:Material": "Aluminium",
-            "*C:Type": "Safety Sign",
-            "*C:Colour": color_display,
-            "*C:Size": size_info["display"],
+            "*ShippingType": "Flat",
+            "ShippingService-1:Option": "UK_RoyalMailSecondClassStandard",
+            "ShippingService-1:Cost": "0.00",
+            "ShippingService-1:FreeShipping": "True",
+            "C:Brand": "NorthByNorthEast",
+            "C:Material": "Aluminium",
+            "C:Colour": color_display,
+            "C:Size": size_info["display"],
+            "C:Type": "Sign",
+            "C:Mounting Type": "Self-Adhesive",
         }
 
         writer.writerow(row)
-    
+
     return output.getvalue()
-
-
-if __name__ == "__main__":
-    # Test
-    test_products = [
-        {"m_number": "M1001", "description": "No Entry", "size": "saville", "color": "silver"},
-        {"m_number": "M1002", "description": "Staff Only", "size": "dick", "color": "gold"},
-    ]
-    print(generate_ebay_csv(test_products))
