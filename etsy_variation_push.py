@@ -94,9 +94,10 @@ def build_products(
             "sku": v.get("m_number", ""),
             "property_values": pv,
             "offerings": [{
-                "price": price,
-                "quantity": qty,
-                "is_enabled": True,
+                "price":              price,
+                "quantity":           qty,
+                "is_enabled":         True,
+                "readiness_state_id": 1402336022581,
             }],
         })
 
@@ -177,9 +178,10 @@ def fill_missing_combinations(
                         _build_property_value(opt2_prop, o2),
                     ],
                     "offerings": [{
-                        "price": min_price,
-                        "quantity": 0,
-                        "is_enabled": False,
+                        "price":              min_price,
+                        "quantity":           0,
+                        "is_enabled":         False,
+                        "readiness_state_id": 1402336022581,
                     }],
                 })
 
@@ -356,8 +358,9 @@ def build_variation_image_bindings(
 
         entry = {
             "property_id": opt2_pid,
-            "image_id": img_id,
+            "image_id":    img_id,
         }
+        # Standard properties (like primary_color) require value_id for variation-image binding
         if value_ids:
             entry["value_id"] = value_ids[0]
         else:

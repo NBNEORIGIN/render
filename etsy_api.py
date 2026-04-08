@@ -233,7 +233,7 @@ class EtsyListingManager:
         return self._request(
             "POST",
             f"listings/{listing_id}/variation-images",
-            data=variation_images,
+            data={"variation_images": variation_images},
         )
 
     def get_variation_images(self, listing_id: int) -> dict:

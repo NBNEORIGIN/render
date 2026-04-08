@@ -34,26 +34,27 @@ PROPERTY_DISPLAY_NAMES: dict[str, str] = {
 }
 
 # Known Etsy value_ids for primary_color (property 200).
-# These are stable Etsy taxonomy IDs — verified against Etsy API 2024.
-# Silver, Gold, White are all valid Etsy primary_color values.
-# Pass [] for custom properties — value_ids are not required for custom slots.
+# Verified against GET /v3/application/seller-taxonomy/nodes/2844/properties (2026-04-08).
 PRIMARY_COLOR_VALUE_IDS: dict[str, int] = {
-    "White":  1,
-    "Gray":   2,
-    "Silver": 3,
-    "Black":  4,
-    "Red":    5,
-    "Orange": 6,
-    "Yellow": 7,
-    "Green":  8,
-    "Blue":   9,
-    "Purple": 10,
-    "Pink":   11,
-    "Brown":  12,
-    "Gold":   13,
-    "Copper": 14,
-    "Beige":  15,
-    "Cream":  16,
+    "Beige":    1213,
+    "Black":    1,
+    "Blue":     2,
+    "Bronze":   1216,
+    "Brown":    3,
+    "Clear":    1219,
+    "Copper":   1218,
+    "Gold":     1214,
+    "Gray":     5,
+    "Green":    4,
+    "Orange":   6,
+    "Pink":     7,
+    "Purple":   8,
+    "Rainbow":  1220,
+    "Red":      9,
+    "Rose gold": 1217,
+    "Silver":   1215,
+    "White":    10,
+    "Yellow":   11,
 }
 
 # Map property_name → {value_text: value_id} for standard properties

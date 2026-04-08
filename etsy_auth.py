@@ -33,6 +33,7 @@ ETSY_TOKEN_URL = "https://api.etsy.com/v3/public/oauth/token"
 ETSY_SCOPES = [
     "listings_w",
     "listings_r",
+    "listings_d",
     "transactions_r",
     "shops_r",
 ]
