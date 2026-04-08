@@ -604,7 +604,7 @@
                             </div>
                             <div class="channel-actions">
                                 <button class="btn btn-primary" onclick="publishToEtsy()" id="btn-publish-etsy">Publish via API</button>
-                                <button class="btn btn-outline" onclick="exportEtsyFile()" id="btn-download-etsy">Download XLSX</button>
+                                <button class="btn btn-outline" onclick="downloadEtsyFile()" id="btn-download-etsy">Download XLSX</button>
                             </div>
                         </div>
                     </div>
@@ -2881,6 +2881,40 @@ Use Cases: ${useCases}
             } finally {
                 btn.disabled = false;
                 btn.textContent = 'Publish via API';
+            }
+        }
+
+        async function downloadEtsyFile() {
+            const btn = document.getElementById('btn-download-etsy');
+            const status = document.getElementById('export-all-status');
+            btn.disabled = true;
+            btn.textContent = 'Generating…';
+            exportLog('Generating Etsy XLSX for download…');
+            try {
+                const resp = await fetch('/api/export/etsy-download', {method: 'POST'});
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({error: `Server error ${resp.status}`}));
+                    throw new Error(err.error || `Server error ${resp.status}`);
+                }
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `etsy_shop_uploader_${new Date().toISOString().slice(0,10)}.xlsx`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                status.textContent = '✓ Etsy XLSX downloaded';
+                status.style.color = 'var(--green)';
+                exportLog('Etsy XLSX downloaded', 'success');
+            } catch (e) {
+                status.textContent = `Error: ${e.message}`;
+                status.style.color = 'var(--red)';
+                exportLog(`Etsy download error: ${e.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Download XLSX';
             }
         }
 
