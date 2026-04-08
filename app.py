@@ -900,16 +900,21 @@ def publish_to_ebay():
     
     try:
         from ebay_api import create_ebay_listing, load_policy_ids
-        policy_ids = load_policy_ids()
-    except FileNotFoundError as e:
-        logging.warning(f"eBay policies not configured: {e}")
-        return jsonify({"success": False, "error": "eBay policies not configured. Run ebay_setup_policies.py first."}), 400
-    except ImportError as e:
-        logging.warning(f"eBay API module not available: {e}")
-        return jsonify({"success": False, "error": "eBay API module not available"}), 400
+        from ebay_setup_policies import EbayPoliciesManager
+        from ebay_auth import get_ebay_auth_from_env
+        try:
+            policy_ids = load_policy_ids()
+        except FileNotFoundError:
+            logging.info("eBay policies file not found — running auto-setup")
+            auth = get_ebay_auth_from_env()
+            manager = EbayPoliciesManager(auth)
+            policy_ids = manager.setup_all_policies()
     except Exception as e:
-        logging.error(f"Error loading eBay policies: {e}")
-        return jsonify({"success": False, "error": f"eBay setup error: {str(e)}"}), 400
+        msg = str(e)
+        if "No valid tokens" in msg or "access_token" in msg:
+            return jsonify({"success": False, "error": "eBay authentication required — visit /ebay/oauth/connect to re-authenticate"}), 400
+        logging.error(f"eBay setup error: {e}")
+        return jsonify({"success": False, "error": f"eBay setup error: {msg}"}), 400
     
     try:
         logging.info(f"Publishing {len(products)} products to eBay (promote={promote})")
