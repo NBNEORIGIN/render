@@ -14,5 +14,7 @@ RUN playwright install --with-deps chromium
 
 COPY . .
 
-# --workers 1 until job state is moved to DB (multi-worker causes silent job loss)
-CMD gunicorn app:app --bind 0.0.0.0:5000 --workers 1 --timeout 120
+# 2 workers: allows downloads to proceed while publish is running.
+# Job state is in-memory per worker — job list tab may show incomplete history
+# across workers, but all publish/export operations write to DB immediately.
+CMD gunicorn app:app --bind 0.0.0.0:5000 --workers 2 --timeout 180

@@ -3,9 +3,9 @@
 Generates eBay Seller Hub bulk upload CSV with variation listings.
 Upload via: Seller Hub → Listings → Bulk actions → Upload listings
 
-Variation format:
-- One parent row per design (no price/quantity)
-- One child row per size × colour variant (price, quantity, EAN)
+Variation format (eBay File Exchange v2):
+- One parent row per design — includes VariationSpecificsSet with all colour/size values
+- One child row per size × colour — C:Colour and C:Size hold the specific values
 """
 import csv
 import io
@@ -26,12 +26,10 @@ COLOR_DISPLAY = {
     "white":  "White",
 }
 
-# Columns required by eBay Seller Hub variation upload
 HEADERS = [
     "*Action",
     "ItemID",
     "Relationship",
-    "RelationshipDetails",
     "*Title",
     "*Category",
     "ConditionID",
@@ -47,12 +45,12 @@ HEADERS = [
     "*DispatchTimeMax",
     "*ReturnsAcceptedOption",
     "ReturnsWithinOption",
-    "RefundOption",
     "ShippingCostPaidByOption",
     "*ShippingType",
     "ShippingService-1:Option",
     "ShippingService-1:Cost",
     "ShippingService-1:FreeShipping",
+    "VariationSpecificsSet",
     "C:Brand",
     "C:Material",
     "C:Colour",
@@ -99,7 +97,13 @@ def generate_ebay_csv(products: list[dict], base_url: str = "") -> str:
             f"</ul>"
         )
 
-        # Use first variant's images for the parent
+        # Collect all distinct colours and sizes for VariationSpecificsSet
+        colours = sorted({COLOR_DISPLAY.get((p.get("color") or "silver").lower(), "Silver") for p in variants})
+        sizes = [SIZE_CONFIG[s]["display"] for s in ["dracula", "saville", "dick", "barzan", "baby_jesus"]
+                 if any((p.get("size") or "").lower() == s for p in variants)]
+        variation_set = f"Colour={';'.join(colours)}|Size={';'.join(sizes)}"
+
+        # Parent images from first variant
         first = variants[0]
         m0 = first.get("m_number", "")
         pic_url = "|".join([
@@ -109,12 +113,11 @@ def generate_ebay_csv(products: list[dict], base_url: str = "") -> str:
             f"{base}/images/{m0}/{m0}-004.jpg",
         ]) if base else ""
 
-        # Parent row — no price, quantity, EAN, Colour, Size
+        # Parent row
         parent = {
             "*Action":      "Add",
             "ItemID":       "",
             "Relationship": "",
-            "RelationshipDetails": "",
             "*Title":       title,
             "*Category":    EBAY_CATEGORY_ID,
             "ConditionID":  "1000",
@@ -127,29 +130,28 @@ def generate_ebay_csv(products: list[dict], base_url: str = "") -> str:
             "*Duration":    "GTC",
             "*Location":    "Alnwick, Northumberland",
             "*Country":     "GB",
-            "*DispatchTimeMax":      "3",
+            "*DispatchTimeMax":       "3",
             "*ReturnsAcceptedOption": "ReturnsAccepted",
-            "ReturnsWithinOption":   "Days_30",
-            "RefundOption":          "MoneyBack",
+            "ReturnsWithinOption":    "Days_30",
             "ShippingCostPaidByOption": "Buyer",
-            "*ShippingType":         "Flat",
-            "ShippingService-1:Option":      "UK_RoyalMailSecondClassStandard",
-            "ShippingService-1:Cost":        "0.00",
-            "ShippingService-1:FreeShipping": "True",
-            "C:Brand":    "NorthByNorthEast",
-            "C:Material": "Aluminium",
-            "C:Type":     "Sign",
+            "*ShippingType": "Flat",
+            "ShippingService-1:Option":       "UK_RoyalMailSecondClassStandard",
+            "ShippingService-1:Cost":         "0.00",
+            "ShippingService-1:FreeShipping":  "True",
+            "VariationSpecificsSet": variation_set,
+            "C:Brand":        "NorthByNorthEast",
+            "C:Material":     "Aluminium",
+            "C:Type":         "Sign",
             "C:Mounting Type": "Self-Adhesive",
         }
         writer.writerow(parent)
 
-        # Child rows — one per variant
+        # Child rows
         for p in variants:
-            m_number = p.get("m_number", "")
-            size     = (p.get("size") or "saville").lower()
-            color    = (p.get("color") or "silver").lower()
-            ean      = p.get("ean") or ""
-
+            m_number    = p.get("m_number", "")
+            size        = (p.get("size") or "saville").lower()
+            color       = (p.get("color") or "silver").lower()
+            ean         = p.get("ean") or ""
             size_info     = SIZE_CONFIG.get(size, SIZE_CONFIG["saville"])
             color_display = COLOR_DISPLAY.get(color, "Silver")
 
@@ -162,7 +164,6 @@ def generate_ebay_csv(products: list[dict], base_url: str = "") -> str:
                 "*Action":           "Add",
                 "ItemID":            "",
                 "Relationship":      "Variation",
-                "RelationshipDetails": f"C:Colour={color_display}|C:Size={size_info['display']}",
                 "*Title":            title,
                 "*Category":         EBAY_CATEGORY_ID,
                 "ConditionID":       "1000",
@@ -178,19 +179,19 @@ def generate_ebay_csv(products: list[dict], base_url: str = "") -> str:
                 "*DispatchTimeMax":  "",
                 "*ReturnsAcceptedOption": "",
                 "ReturnsWithinOption":    "",
-                "RefundOption":           "",
                 "ShippingCostPaidByOption": "",
                 "*ShippingType":     "",
                 "ShippingService-1:Option":       "",
                 "ShippingService-1:Cost":         "",
                 "ShippingService-1:FreeShipping":  "",
-                "C:Brand":    "NorthByNorthEast",
-                "C:Material": "Aluminium",
-                "C:Colour":   color_display,
-                "C:Size":     size_info["display"],
-                "C:Type":     "Sign",
+                "VariationSpecificsSet": "",
+                "C:Brand":        "NorthByNorthEast",
+                "C:Material":     "Aluminium",
+                "C:Colour":       color_display,
+                "C:Size":         size_info["display"],
+                "C:Type":         "Sign",
                 "C:Mounting Type": "Self-Adhesive",
-                "EAN":        ean,
+                "EAN":            ean,
             }
             writer.writerow(child)
 
