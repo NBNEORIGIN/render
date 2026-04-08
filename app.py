@@ -2645,5 +2645,168 @@ def amazon_spapi_log():
         release_db(conn)
 
 
+@app.route('/api/amazon/publish-products', methods=['POST'])
+def amazon_publish_products():
+    """
+    Publish all approved render_products to Amazon via SP-API.
+    Upserts catalogue_listing + catalogue_variants from product data,
+    auto-assigns EANs from pool, then calls publish_listing().
+    """
+    import re, json as _json
+    from amazon_api import publish_listing, CatalogueVariant as _CV
+
+    data = request.json or {}
+    theme = (data.get('theme') or '').strip()
+
+    products = Product.approved()
+    if not products:
+        return jsonify({"error": "No approved products to publish"}), 400
+
+    blanks_cache = {b["slug"]: b for b in Blank.all()}
+    SIZE_PRICING = {"dracula": 10.99, "saville": 11.99, "dick": 12.99, "barzan": 15.99, "baby_jesus": 17.99}
+    COLOR_DISPLAY = {"silver": "Silver", "white": "White", "gold": "Gold"}
+
+    if not theme:
+        # Fallback: use description of first product
+        theme = products[0].get('description') or 'Sign'
+
+    # Derive parent internal_ref (without _PARENT suffix — appended by amazon_api)
+    internal_ref = re.sub(r'[^A-Z0-9_]', '', theme.upper().replace(" ", "_").replace("-", "_"))
+
+    default_bullets = [
+        "Premium 1mm brushed aluminium construction with elegant finish",
+        "UV-resistant printing ensures text remains clear and legible for years",
+        "Self-adhesive backing — quick peel and stick, no tools required",
+        "Fully weatherproof — withstands rain, snow, and temperature extremes",
+        "Clear, bold messaging ensures excellent visibility in any environment",
+    ]
+    default_description = f"{theme} Sign – Brushed Aluminium, Weatherproof, Self-Adhesive."
+    default_search_terms = "sign warning notice metal plaque weatherproof aluminium"
+
+    from config import PUBLIC_BASE_URL
+
+    conn = get_db()
+    try:
+        cur = conn.cursor()
+
+        # Upsert catalogue_listing
+        cur.execute("""
+            INSERT INTO render_catalogue_listing
+              (internal_ref, product_type, brand_name, title_base, description,
+               bullet_point_1, bullet_point_2, bullet_point_3, bullet_point_4, bullet_point_5,
+               generic_keywords, recommended_browse_nodes, variation_theme)
+            VALUES (%s, 'signage', 'NorthByNorthEast', %s, %s,
+                    %s, %s, %s, %s, %s, %s, '330215031', 'Size & Colour')
+            ON CONFLICT (internal_ref) DO UPDATE SET
+              title_base = EXCLUDED.title_base,
+              description = EXCLUDED.description,
+              updated_at = NOW()
+            RETURNING id
+        """, (
+            internal_ref,
+            f"{theme} Sign – Brushed Aluminium",
+            default_description,
+            default_bullets[0], default_bullets[1], default_bullets[2],
+            default_bullets[3], default_bullets[4],
+            default_search_terms,
+        ))
+        listing_id = cur.fetchone()[0]
+        conn.commit()
+
+        # Upsert catalogue_variant per product
+        for p in products:
+            m_number = p['m_number']
+            size = (p.get('size') or 'saville').lower()
+            color = (p.get('color') or 'silver').lower()
+            blank = blanks_cache.get(size, {})
+            length_cm = (blank.get('width_mm') or 100) / 10
+            width_cm = (blank.get('height_mm') or 100) / 10
+            size_code = blank.get('amazon_code', 'M')
+            color_display = COLOR_DISPLAY.get(color, color.title())
+            price = SIZE_PRICING.get(size, 12.99)
+            title_full = f"{theme} Sign – {length_cm:.0f}x{width_cm:.0f}cm Brushed Aluminium {color_display}"
+            image_urls = [
+                f"{PUBLIC_BASE_URL}/images/{m_number}/{m_number}-001.jpg",
+                f"{PUBLIC_BASE_URL}/images/{m_number}/{m_number}-002.jpg",
+                f"{PUBLIC_BASE_URL}/images/{m_number}/{m_number}-003.jpg",
+                f"{PUBLIC_BASE_URL}/images/{m_number}/{m_number}-004.jpg",
+            ]
+
+            cur.execute("""
+                INSERT INTO render_catalogue_variant
+                  (listing_id, sku, title_full, colour_name, colour_map,
+                   size_name, size_map, length_cm, width_cm, list_price,
+                   style_name, image_urls)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (sku) DO UPDATE SET
+                  title_full = EXCLUDED.title_full,
+                  colour_name = EXCLUDED.colour_name,
+                  size_name = EXCLUDED.size_name,
+                  list_price = EXCLUDED.list_price,
+                  image_urls = EXCLUDED.image_urls,
+                  updated_at = NOW()
+            """, (
+                listing_id, m_number, title_full,
+                color_display, color_display,
+                size_code, size_code,
+                length_cm, width_cm, price,
+                f"{color_display}_{size_code}",
+                _json.dumps(image_urls),
+            ))
+        conn.commit()
+
+        # Auto-assign EANs to variants missing them
+        cur.execute(
+            "SELECT sku FROM render_catalogue_variant WHERE listing_id = %s AND ean IS NULL",
+            (listing_id,)
+        )
+        skus_needing_ean = [r[0] for r in cur.fetchall()]
+
+        ean_errors = []
+        for sku in skus_needing_ean:
+            try:
+                from models import CatalogueVariant as _CatV
+                _CatV.assign_ean(sku)
+            except Exception as e:
+                ean_errors.append({"sku": sku, "error": str(e)})
+
+        # Re-fetch listing and variants with EANs
+        cur_d = dict_cursor(conn)
+        cur_d.execute("SELECT * FROM render_catalogue_listing WHERE id = %s", (listing_id,))
+        listing = dict(cur_d.fetchone())
+
+        cur_d.execute(
+            "SELECT * FROM render_catalogue_variant WHERE listing_id = %s ORDER BY sku",
+            (listing_id,)
+        )
+        variants = [dict(r) for r in cur_d.fetchall()]
+
+        missing_ean = [v["sku"] for v in variants if not v.get("ean")]
+        if missing_ean:
+            return jsonify({
+                "error": "EAN pool exhausted — cannot assign EANs to all variants",
+                "missing_ean": missing_ean,
+                "ean_errors": ean_errors,
+            }), 400
+
+        if not os.environ.get("AMAZON_REFRESH_TOKEN_EU"):
+            return jsonify({"error": "AMAZON_REFRESH_TOKEN_EU not configured"}), 400
+
+        seller_id = os.environ.get("AMAZON_SELLER_ID_EU", "ANO0V0M1RQZY9")
+        results = publish_listing(seller_id, listing, variants, conn)
+        results["listing_id"] = listing_id
+        results["variant_count"] = len(variants)
+        results["ean_auto_assigned"] = len(skus_needing_ean) - len(ean_errors)
+        if ean_errors:
+            results["ean_errors"] = ean_errors
+        return jsonify(results)
+
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        release_db(conn)
+
+
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

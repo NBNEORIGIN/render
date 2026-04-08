@@ -578,6 +578,7 @@
                                 <span class="channel-name">Amazon</span>
                             </div>
                             <div class="channel-actions">
+                                <button class="btn btn-primary" onclick="publishToAmazon()" id="btn-publish-amazon">Publish via API</button>
                                 <button class="btn btn-warning" onclick="exportAmazonFlatfile()" id="btn-export-amazon">Generate Flatfile</button>
                                 <button class="btn btn-outline" onclick="downloadAmazonFlatfile()">Download Flatfile</button>
                             </div>
@@ -2767,6 +2768,69 @@ Use Cases: ${useCases}
             }
         }
         
+        async function publishToAmazon() {
+            const btn = document.getElementById('btn-publish-amazon');
+            const status = document.getElementById('export-all-status');
+            const progress = document.getElementById('export-progress');
+            btn.disabled = true;
+            btn.textContent = 'Publishing…';
+            progress.style.display = 'block';
+            progress.innerHTML = 'Connecting to Amazon SP-API…<br>';
+            exportLog('Publishing to Amazon via SP-API…');
+
+            const theme = document.getElementById('theme')?.value || '';
+
+            try {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 120000);
+                const resp = await fetch('/api/amazon/publish-products', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ theme }),
+                    signal: controller.signal
+                });
+                clearTimeout(timeout);
+                const data = await resp.json();
+
+                if (data.error) {
+                    progress.innerHTML += `⚠ Amazon: ${data.error}<br>`;
+                    if (data.missing_ean) {
+                        progress.innerHTML += `&nbsp;&nbsp;Missing EANs: ${data.missing_ean.join(', ')}<br>`;
+                    }
+                    status.textContent = `Amazon error: ${data.error}`;
+                    status.style.color = 'var(--red)';
+                    exportLog(`Amazon error: ${data.error}`, 'error');
+                } else {
+                    const parentOk = data.parent?.ok ? '✓' : '✗';
+                    const childrenOk = (data.children || []).filter(c => c.ok).length;
+                    const childrenTotal = (data.children || []).length;
+                    progress.innerHTML += `${parentOk} Parent SKU submitted<br>`;
+                    progress.innerHTML += `✓ ${childrenOk}/${childrenTotal} variants submitted<br>`;
+                    if (data.ean_auto_assigned > 0) {
+                        progress.innerHTML += `ℹ ${data.ean_auto_assigned} EAN(s) auto-assigned from pool<br>`;
+                    }
+                    progress.innerHTML += `ℹ ASINs will be assigned by Amazon — use "Poll ASINs" in the Catalogue tab to retrieve them.<br>`;
+                    status.textContent = `✓ Amazon: ${childrenOk}/${childrenTotal} variants submitted`;
+                    status.style.color = 'var(--green)';
+                    exportLog(`Amazon SP-API: parent ${parentOk}, ${childrenOk}/${childrenTotal} variants submitted`, 'success');
+
+                    (data.children || []).filter(c => !c.ok).forEach(c => {
+                        progress.innerHTML += `⚠ ${c.sku}: ${c.error_code || 'error'}<br>`;
+                        exportLog(`Amazon variant ${c.sku} failed: ${c.error_code}`, 'error');
+                    });
+                }
+            } catch (e) {
+                const msg = e.name === 'AbortError' ? 'Request timed out' : e.message;
+                progress.innerHTML += `⚠ Amazon: ${msg}<br>`;
+                status.textContent = `Amazon error: ${msg}`;
+                status.style.color = 'var(--red)';
+                exportLog(`Amazon error: ${msg}`, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Publish via API';
+            }
+        }
+
         async function publishToEtsy() {
             const btn = document.getElementById('btn-publish-etsy');
             const status = document.getElementById('export-all-status');
