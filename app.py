@@ -2509,5 +2509,141 @@ def ean_pool_status():
     return jsonify({"remaining": EanPool.remaining()})
 
 
+# ── Phase 3: EAN seed CLI command ─────────────────────────────────────────────
+
+import click as _click
+
+@app.cli.command("seed-eans")
+@_click.argument("csv_path")
+def seed_eans_command(csv_path):
+    """Seed EAN pool from a CSV file (one 13-digit EAN per line)."""
+    import csv as _csv
+    eans = []
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        for row in _csv.reader(f):
+            for cell in row:
+                cell = cell.strip()
+                if cell:
+                    eans.append(cell)
+    result = EanPool.seed(eans)
+    print(f"EAN seed complete: {result['inserted']} inserted, "
+          f"{result['skipped']} skipped (duplicates), "
+          f"{result['invalid']} invalid (not 13-digit)")
+
+
+# ── Phase 4: Amazon SP-API publish routes ──────────────────────────────────────
+
+@app.route('/api/amazon/listings/preflight/<int:listing_id>', methods=['GET'])
+def amazon_preflight(listing_id):
+    """Pre-publish checklist for a listing."""
+    listing = CatalogueListing.get(listing_id)
+    if not listing:
+        return jsonify({"error": "Listing not found"}), 404
+
+    variants = CatalogueVariant.for_listing(listing_id)
+    issues = []
+    warnings = []
+
+    missing_ean = [v["sku"] for v in variants if not v.get("ean")]
+    if missing_ean:
+        issues.append({"type": "error", "code": "MISSING_EAN",
+                       "message": f"{len(missing_ean)} variant(s) missing EAN: {', '.join(missing_ean)}"})
+
+    already_live = [v["sku"] for v in variants if v.get("amazon_status") == "live"]
+    if already_live:
+        issues.append({"type": "error", "code": "ALREADY_LIVE",
+                       "message": f"Parent already has live variants — publishing will overwrite: {', '.join(already_live)}"})
+
+    pending = [v["sku"] for v in variants if v.get("amazon_status") == "pending"]
+    if pending:
+        warnings.append({"type": "warning", "code": "VARIANTS_PENDING",
+                         "message": f"{len(pending)} variant(s) already pending Amazon processing"})
+
+    missing_images = [v["sku"] for v in variants
+                      if not (v.get("image_urls") or [])]
+    if missing_images:
+        warnings.append({"type": "warning", "code": "MISSING_IMAGES",
+                         "message": f"{len(missing_images)} variant(s) have no images"})
+
+    if not os.environ.get("AMAZON_REFRESH_TOKEN_EU"):
+        issues.append({"type": "error", "code": "NO_CREDENTIALS",
+                       "message": "AMAZON_REFRESH_TOKEN_EU not set in environment"})
+
+    return jsonify({
+        "listing_id": listing_id,
+        "internal_ref": listing["internal_ref"],
+        "variant_count": len(variants),
+        "ready": len(issues) == 0,
+        "issues": issues,
+        "warnings": warnings,
+    })
+
+
+@app.route('/api/amazon/listings/publish/<int:listing_id>', methods=['POST'])
+def amazon_publish(listing_id):
+    """Publish a listing (parent + all child variants) to Amazon UK."""
+    from amazon_api import publish_listing
+
+    listing = CatalogueListing.get(listing_id)
+    if not listing:
+        return jsonify({"error": "Listing not found"}), 404
+
+    variants = CatalogueVariant.for_listing(listing_id)
+    if not variants:
+        return jsonify({"error": "No variants for this listing"}), 400
+
+    # Block if any variants are missing EAN
+    missing_ean = [v["sku"] for v in variants if not v.get("ean")]
+    if missing_ean:
+        return jsonify({
+            "error": "Cannot publish — EAN missing on variants",
+            "missing_ean": missing_ean,
+        }), 400
+
+    seller_id = os.environ.get("AMAZON_SELLER_ID_EU", "ANO0V0M1RQZY9")
+
+    conn = get_db()
+    try:
+        results = publish_listing(seller_id, listing, variants, conn)
+    finally:
+        release_db(conn)
+
+    return jsonify(results)
+
+
+@app.route('/api/amazon/listings/poll-asins', methods=['POST'])
+def amazon_poll_asins():
+    """Poll Amazon for ASINs on all pending variants (published >15 min ago)."""
+    from amazon_api import poll_asins
+
+    seller_id = os.environ.get("AMAZON_SELLER_ID_EU", "ANO0V0M1RQZY9")
+    conn = get_db()
+    try:
+        results = poll_asins(seller_id, conn)
+    finally:
+        release_db(conn)
+
+    return jsonify({"polled": len(results), "results": results})
+
+
+@app.route('/api/amazon/listings/log', methods=['GET'])
+def amazon_spapi_log():
+    """Return recent SP-API log entries (last 50)."""
+    conn = get_db()
+    try:
+        cur = dict_cursor(conn)
+        cur.execute(
+            "SELECT id, sku, operation, response_status, error_code, created_at "
+            "FROM render_spapi_log ORDER BY created_at DESC LIMIT 50"
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        for r in rows:
+            if hasattr(r.get("created_at"), "isoformat"):
+                r["created_at"] = r["created_at"].isoformat()
+        return jsonify(rows)
+    finally:
+        release_db(conn)
+
+
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

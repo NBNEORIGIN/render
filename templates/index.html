@@ -705,6 +705,7 @@
                     </div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
                         <button class="btn btn-secondary" onclick="loadCatalogue()">🔄 Refresh</button>
+                        <button class="btn btn-outline" onclick="pollAsins(this)">🔍 Poll ASINs</button>
                         <a href="/catalogue/export/csv" class="btn btn-outline">⬇️ Download CSV</a>
                     </div>
                 </div>
@@ -3322,8 +3323,13 @@ Use Cases: ${useCases}
                             </div>
                         </div>
                         <div id="variants-${l.id}" style="display:none;"></div>
-                        <button class="btn btn-outline" style="font-size:12px;padding:5px 12px;"
-                            onclick="toggleVariants(${l.id})">Show variants</button>
+                        <div id="preflight-${l.id}" style="display:none;margin-bottom:10px;"></div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                            <button class="btn btn-outline" style="font-size:12px;padding:5px 12px;"
+                                onclick="toggleVariants(${l.id})">Show variants</button>
+                            <button class="btn btn-primary" style="font-size:12px;padding:5px 12px;"
+                                onclick="publishToAmazon(${l.id}, this)">Publish to Amazon</button>
+                        </div>
                     </div>`).join('');
             } catch(e) {
                 container.innerHTML = `<div class="card"><p style="color:#c53030;font-size:13px;">Error loading catalogue: ${e.message}</p></div>`;
@@ -3403,6 +3409,117 @@ Use Cases: ${useCases}
                 alert('Error: ' + e.message);
                 btn.disabled = false;
                 btn.textContent = 'Assign EAN';
+            }
+        }
+
+        async function pollAsins(btn) {
+            btn.disabled = true;
+            btn.textContent = '⏳ Polling…';
+            try {
+                const r = await fetch('/api/amazon/listings/poll-asins', { method: 'POST' });
+                const d = await r.json();
+                const live    = (d.results || []).filter(x => x.result === 'live').length;
+                const pending = (d.results || []).filter(x => x.result === 'still_pending').length;
+                const errors  = (d.results || []).filter(x => x.result === 'error').length;
+                btn.textContent = `✓ ${live} live, ${pending} still pending, ${errors} errors`;
+                if (live > 0) loadCatalogue();
+            } catch(e) {
+                btn.textContent = '✗ Poll failed';
+                console.error(e);
+            }
+            setTimeout(() => { btn.disabled = false; btn.textContent = '🔍 Poll ASINs'; }, 5000);
+        }
+
+        async function publishToAmazon(listingId, btn) {
+            const preflightEl = document.getElementById(`preflight-${listingId}`);
+            preflightEl.style.display = 'block';
+            preflightEl.innerHTML = '<p style="font-size:13px;color:#64748b;">Running pre-publish checks…</p>';
+
+            // Step 1: preflight
+            let pf;
+            try {
+                const r = await fetch(`/api/amazon/listings/preflight/${listingId}`);
+                pf = await r.json();
+            } catch(e) {
+                preflightEl.innerHTML = `<p style="color:#c53030;font-size:13px;">Preflight failed: ${e.message}</p>`;
+                return;
+            }
+
+            // Render issues/warnings
+            const issueHtml = [...(pf.issues || []), ...(pf.warnings || [])].map(i => {
+                const colour = i.type === 'error' ? '#c53030' : '#92400e';
+                const bg = i.type === 'error' ? '#fff5f5' : '#fffbeb';
+                return `<div style="background:${bg};border-left:3px solid ${colour};padding:8px 12px;margin-bottom:6px;border-radius:4px;font-size:13px;color:${colour};">${i.message}</div>`;
+            }).join('');
+
+            if (!pf.ready) {
+                preflightEl.innerHTML = `
+                    <div style="margin-bottom:8px;font-size:13px;font-weight:600;color:#c53030;">Cannot publish — resolve these issues first:</div>
+                    ${issueHtml}`;
+                return;
+            }
+
+            // Warnings only — confirm
+            if (pf.warnings?.length) {
+                preflightEl.innerHTML = `
+                    <div style="margin-bottom:8px;font-size:13px;font-weight:600;">Warnings (publish will proceed):</div>
+                    ${issueHtml}
+                    <div style="margin-top:10px;display:flex;gap:8px;">
+                        <button class="btn btn-primary" style="font-size:12px;" onclick="_doPublish(${listingId}, this)">Confirm &amp; Publish</button>
+                        <button class="btn btn-outline" style="font-size:12px;" onclick="document.getElementById('preflight-${listingId}').style.display='none'">Cancel</button>
+                    </div>`;
+                return;
+            }
+
+            // No issues — publish directly
+            await _doPublish(listingId, btn);
+        }
+
+        async function _doPublish(listingId, btn) {
+            const preflightEl = document.getElementById(`preflight-${listingId}`);
+            preflightEl.innerHTML = '<p style="font-size:13px;color:#2563eb;">Publishing to Amazon… (this may take 30–60 seconds)</p>';
+            btn.disabled = true;
+
+            try {
+                const r = await fetch(`/api/amazon/listings/publish/${listingId}`, { method: 'POST' });
+                const d = await r.json();
+
+                if (d.error) {
+                    preflightEl.innerHTML = `<p style="color:#c53030;font-size:13px;">Publish failed: ${d.error}</p>`;
+                    btn.disabled = false;
+                    return;
+                }
+
+                const parentOk = d.parent?.ok;
+                const children = d.children || [];
+                const nPending = children.filter(c => c.status === 'pending').length;
+                const nError   = children.filter(c => c.status === 'error').length;
+                const nSkipped = children.filter(c => c.status === 'skipped').length;
+
+                const childRows = children.map(c => {
+                    const colour = c.status === 'pending' ? '#065f46' : c.status === 'error' ? '#c53030' : '#64748b';
+                    const icon   = c.status === 'pending' ? '✓' : c.status === 'error' ? '✗' : '–';
+                    const detail = c.error_code ? ` (${c.error_code})` : '';
+                    return `<div style="font-size:12px;color:${colour};font-family:monospace;">${icon} ${c.sku}${detail}</div>`;
+                }).join('');
+
+                preflightEl.innerHTML = `
+                    <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:12px;font-size:13px;">
+                        <div style="font-weight:600;margin-bottom:6px;color:#166534;">
+                            Parent: ${parentOk ? '✓ submitted' : '✗ failed'} &nbsp;|&nbsp;
+                            ${nPending} pending &nbsp;|&nbsp; ${nError} error${nError !== 1 ? 's' : ''} &nbsp;|&nbsp; ${nSkipped} skipped
+                        </div>
+                        ${childRows}
+                        <div style="margin-top:8px;color:#64748b;font-size:12px;">
+                            Amazon processes listings asynchronously. Use Poll ASINs in 15+ minutes to retrieve ASINs.
+                        </div>
+                    </div>`;
+                btn.disabled = false;
+                // Refresh catalogue stats
+                loadCatalogue();
+            } catch(e) {
+                preflightEl.innerHTML = `<p style="color:#c53030;font-size:13px;">Error: ${e.message}</p>`;
+                btn.disabled = false;
             }
         }
 
