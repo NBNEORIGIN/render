@@ -73,7 +73,7 @@ def _image_locators(image_urls: list) -> dict:
 
 def build_parent_payload(listing: dict) -> dict:
     return {
-        "productType": "SIGNAGE",
+        "productType": "signage",
         "requirements": "LISTING",
         "attributes": {
             "item_name":        _mk_str(listing["title_base"]),
@@ -166,7 +166,7 @@ def build_child_payload(listing: dict, variant: dict) -> dict:
         attrs["style"] = _mk_val(variant["style_name"])
 
     attrs.update(_image_locators(image_urls))
-    return {"productType": "SIGNAGE", "requirements": "LISTING", "attributes": attrs}
+    return {"productType": "signage", "requirements": "LISTING", "attributes": attrs}
 
 
 # ── API calls ──────────────────────────────────────────────────────────────────
