@@ -902,13 +902,41 @@ def publish_to_ebay():
         from ebay_api import create_ebay_listing, load_policy_ids
         from ebay_setup_policies import EbayPoliciesManager
         from ebay_auth import get_ebay_auth_from_env
-        try:
-            policy_ids = load_policy_ids()
-        except FileNotFoundError:
-            logging.info("eBay policies file not found — running auto-setup")
-            auth = get_ebay_auth_from_env()
-            manager = EbayPoliciesManager(auth)
-            policy_ids = manager.setup_all_policies()
+        # Check both the app dir and the volume-mounted config dir
+        import json as _json
+        _policy_paths = [
+            Path("/opt/nbne/render/ebay_policies.json"),
+            Path(__file__).parent / "ebay_policies.json",
+        ]
+        _loaded = False
+        for _p in _policy_paths:
+            if _p.exists():
+                with _p.open() as _f:
+                    policy_ids = _json.load(_f)
+                _loaded = True
+                break
+        if not _loaded:
+            logging.info("eBay policies file not found — using known account policy IDs")
+            # These IDs are from the NBNE eBay account (fetched 2026-04-08).
+            # Standard UK Shipping / 30-day returns / eBay Payments immediate.
+            policy_ids = {
+                "fulfillmentPolicyId": "253767317013",
+                "returnPolicyId":      "255261922013",
+                "paymentPolicyId":     "186497146013",
+                "marketplaceId":       "EBAY_GB",
+            }
+            # Persist to volume mount so next call loads from file
+            _vol = Path("/opt/nbne/render/ebay_policies.json")
+            try:
+                with _vol.open("w") as _f:
+                    _json.dump(policy_ids, _f, indent=2)
+                logging.info("eBay policies written to %s", _vol)
+            except Exception as _e:
+                logging.warning("Could not write policies to volume: %s", _e)
+                # Fall back to app dir
+                _local = Path(__file__).parent / "ebay_policies.json"
+                with _local.open("w") as _f:
+                    _json.dump(policy_ids, _f, indent=2)
     except Exception as e:
         msg = str(e)
         if "No valid tokens" in msg or "access_token" in msg:
