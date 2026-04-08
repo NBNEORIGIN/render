@@ -120,6 +120,7 @@ class EtsyListingManager:
             "is_supply": False,
             "shipping_profile_id": ETSY_SHIPPING_PROFILE_ID,
             "return_policy_id": ETSY_RETURN_POLICY_ID,
+            "readiness_state_id": 1402336022581,
             "tags": tags,
             "materials": ["brushed aluminium"],
             "type": "physical",
