@@ -3182,31 +3182,7 @@ Use Cases: ${useCases}
         }
         
         // Download Etsy file
-        async function downloadEtsyFile() {
-            exportLog('Generating Etsy file for download...');
-            
-            try {
-                const resp = await fetch('/api/export/etsy-download', {method: 'POST'});
-                
-                if (resp.ok) {
-                    const blob = await resp.blob();
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `etsy_shop_uploader_${new Date().toISOString().slice(0,10)}.xlsx`;
-                    document.body.appendChild(a);
-                    a.click();
-                    a.remove();
-                    window.URL.revokeObjectURL(url);
-                    exportLog('Etsy file downloaded', 'success');
-                } else {
-                    const data = await resp.json();
-                    exportLog(`Error: ${data.error}`, 'error');
-                }
-            } catch (e) {
-                exportLog(`Error: ${e.message}`, 'error');
-            }
-        }
+        // downloadEtsyFile defined above
         
         // Load products and icons on page load
         document.addEventListener('DOMContentLoaded', function() {
