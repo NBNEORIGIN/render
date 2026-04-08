@@ -490,7 +490,7 @@ def _build_draft_listing_payload(group: dict, variants: list[dict]) -> dict:
         "shipping_profile_id":  group["shipping_profile_id"],
         "return_policy_id":     group["return_policy_id"],
         "readiness_state_id":   group.get("readiness_state_id") or 1402336022581,
-        "tags":                 tags[:13],
+        "tags":                 [t[:20] for t in tags[:13]],
         "materials":            ["brushed aluminium"],
         "type":                 "physical",
         "state":                "draft",

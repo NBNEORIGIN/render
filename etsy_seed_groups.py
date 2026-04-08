@@ -49,8 +49,8 @@ GROUPS = [
         "option1_property":    "size",
         "option2_property":    "primary_color",
         "tags": [
-            "please use other door", "aluminium sign", "door sign",
-            "weatherproof sign", "office sign", "self adhesive sign",
+            "use other door", "aluminium sign", "door sign",
+            "weatherproof sign", "office sign", "self adhesive",
             "brushed aluminium", "silver sign", "gold sign",
             "uk made", "made in britain", "professional sign", "entrance sign",
         ],
@@ -84,8 +84,8 @@ GROUPS = [
         "option1_property":    "size",
         "option2_property":    "primary_color",
         "tags": [
-            "by appointment only", "aluminium sign", "business sign",
-            "weatherproof sign", "office sign", "self adhesive sign",
+            "appointment only", "aluminium sign", "business sign",
+            "weatherproof sign", "office sign", "self adhesive",
             "brushed aluminium", "silver sign", "gold sign",
             "uk made", "professional sign", "appointment sign", "clinic sign",
         ],
