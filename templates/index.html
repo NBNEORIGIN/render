@@ -140,6 +140,9 @@
         .status-pending { background: #fef3c7; color: #92400e; }
         .status-approved { background: #d1fae5; color: #065f46; }
         .status-rejected { background: #fee2e2; color: #991b1b; }
+        .status-unpublished { background: #f1f5f9; color: #64748b; }
+        .status-live { background: #d1fae5; color: #065f46; }
+        .status-error { background: #fee2e2; color: #991b1b; }
         .cell-input {
             padding: 4px 6px;
             border: 1px solid var(--border);
@@ -311,6 +314,7 @@
             <button class="tab" onclick="showTab('generate')">🎨 Generate</button>
             <button class="tab" onclick="showTab('export')">📤 Export</button>
             <button class="tab" onclick="showTab('insights')">📈 Insights</button>
+            <button class="tab" onclick="showTab('catalogue')">🗂 Catalogue</button>
         </div>
         
         <!-- Products Tab -->
@@ -689,6 +693,33 @@
             </div>
         </div>
 
+        <!-- Catalogue Tab -->
+        <div id="catalogue-panel" class="panel">
+
+            <!-- Header row: stats + actions -->
+            <div class="card" style="margin-bottom:16px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+                    <div>
+                        <h2 style="margin:0 0 4px;">🗂 Published Products Catalogue</h2>
+                        <p id="cat-ean-status" style="margin:0;font-size:13px;color:#64748b;">Loading EAN pool…</p>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <button class="btn btn-secondary" onclick="loadCatalogue()">🔄 Refresh</button>
+                        <a href="/catalogue/export/csv" class="btn btn-outline">⬇️ Download CSV</a>
+                    </div>
+                </div>
+
+                <!-- Summary stat pills -->
+                <div id="cat-summary" style="display:flex;gap:12px;margin-top:16px;flex-wrap:wrap;"></div>
+            </div>
+
+            <!-- Listings + variants table -->
+            <div id="cat-listings-container">
+                <p style="color:#999;font-size:13px;">Loading catalogue…</p>
+            </div>
+
+        </div>
+
     </div>
 
     <!-- Add/Edit Product Modal -->
@@ -915,6 +946,7 @@
             if (tab === 'products') loadProducts();
             if (tab === 'qa') loadQAProducts();
             if (tab === 'insights') { loadInsights(); loadImportHistory(); }
+            if (tab === 'catalogue') loadCatalogue();
         }
         
         async function loadProducts() {
@@ -3226,6 +3258,152 @@ Use Cases: ${useCases}
                         <div style="font-size:12px;color:#666;line-height:1.5;">${r.reason}</div>
                     </div>`
                 ).join('') + '</div>';
+        }
+
+        // ── Catalogue ─────────────────────────────────────────────────────────
+        async function loadCatalogue() {
+            // EAN pool status
+            try {
+                const r = await fetch('/api/catalogue/ean-pool/status');
+                const d = await r.json();
+                document.getElementById('cat-ean-status').textContent =
+                    `EAN pool: ${d.remaining} remaining`;
+            } catch(e) {
+                document.getElementById('cat-ean-status').textContent = 'EAN pool: unavailable';
+            }
+
+            // Listings with variant counts
+            const container = document.getElementById('cat-listings-container');
+            const summaryEl = document.getElementById('cat-summary');
+            try {
+                const r = await fetch('/api/catalogue/listings');
+                const listings = await r.json();
+
+                // Compute summary totals
+                let totalVariants = 0, totalLive = 0, totalPending = 0, totalUnpub = 0;
+                listings.forEach(l => {
+                    totalVariants += l.variant_count || 0;
+                    totalLive     += l.amazon_live || 0;
+                    totalPending  += l.amazon_pending || 0;
+                    totalUnpub    += l.amazon_unpublished || 0;
+                });
+
+                summaryEl.innerHTML = [
+                    ['Listings', listings.length, '#2563eb'],
+                    ['Variants', totalVariants, '#64748b'],
+                    ['Live on Amazon', totalLive, '#059669'],
+                    ['Pending', totalPending, '#d97706'],
+                    ['Unpublished', totalUnpub, '#94a3b8'],
+                ].map(([label, val, color]) => `
+                    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px 20px;min-width:120px;">
+                        <div style="font-size:22px;font-weight:700;color:${color};">${val}</div>
+                        <div style="font-size:12px;color:#64748b;margin-top:2px;">${label}</div>
+                    </div>`).join('');
+
+                if (!listings.length) {
+                    container.innerHTML = '<div class="card"><p style="color:#999;font-size:13px;">No catalogue listings yet. Listings will appear here once created.</p></div>';
+                    return;
+                }
+
+                container.innerHTML = listings.map(l => `
+                    <div class="card" style="margin-bottom:12px;">
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+                            <div>
+                                <h3 style="margin:0 0 3px;font-size:1rem;">${l.internal_ref}</h3>
+                                <p style="margin:0;font-size:13px;color:#64748b;">${l.title_base}</p>
+                            </div>
+                            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                                <span style="font-size:12px;background:#f1f5f9;border-radius:20px;padding:2px 10px;color:#475569;">
+                                    ${l.variant_count} variant${l.variant_count !== 1 ? 's' : ''}
+                                </span>
+                                ${l.amazon_live ? `<span style="font-size:12px;background:#d1fae5;color:#065f46;border-radius:20px;padding:2px 10px;">${l.amazon_live} live</span>` : ''}
+                                ${l.amazon_pending ? `<span style="font-size:12px;background:#fef3c7;color:#92400e;border-radius:20px;padding:2px 10px;">${l.amazon_pending} pending</span>` : ''}
+                                ${l.amazon_unpublished ? `<span style="font-size:12px;background:#f1f5f9;color:#64748b;border-radius:20px;padding:2px 10px;">${l.amazon_unpublished} unpublished</span>` : ''}
+                            </div>
+                        </div>
+                        <div id="variants-${l.id}" style="display:none;"></div>
+                        <button class="btn btn-outline" style="font-size:12px;padding:5px 12px;"
+                            onclick="toggleVariants(${l.id})">Show variants</button>
+                    </div>`).join('');
+            } catch(e) {
+                container.innerHTML = `<div class="card"><p style="color:#c53030;font-size:13px;">Error loading catalogue: ${e.message}</p></div>`;
+            }
+        }
+
+        async function toggleVariants(listingId) {
+            const el = document.getElementById(`variants-${listingId}`);
+            const btn = el.nextElementSibling;
+            if (el.style.display === 'block') {
+                el.style.display = 'none';
+                btn.textContent = 'Show variants';
+                return;
+            }
+            btn.textContent = 'Loading…';
+            try {
+                const r = await fetch(`/api/catalogue/listings/${listingId}/variants`);
+                const variants = await r.json();
+                el.innerHTML = variants.length ? `
+                    <table style="width:100%;border-collapse:collapse;font-size:13px;margin-bottom:10px;">
+                        <thead>
+                            <tr style="background:#f8fafc;">
+                                <th style="padding:7px 10px;text-align:left;border-bottom:1px solid #e2e8f0;">SKU</th>
+                                <th style="padding:7px 10px;text-align:left;border-bottom:1px solid #e2e8f0;">EAN</th>
+                                <th style="padding:7px 10px;text-align:left;border-bottom:1px solid #e2e8f0;">Title</th>
+                                <th style="padding:7px 10px;text-align:left;border-bottom:1px solid #e2e8f0;">Size</th>
+                                <th style="padding:7px 10px;text-align:right;border-bottom:1px solid #e2e8f0;">Price</th>
+                                <th style="padding:7px 10px;text-align:left;border-bottom:1px solid #e2e8f0;">Amazon</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${variants.map(v => `
+                            <tr>
+                                <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;font-family:monospace;">${v.sku}</td>
+                                <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">
+                                    ${v.ean
+                                        ? `<span style="font-family:monospace;font-size:12px;">${v.ean}</span>`
+                                        : `<button class="btn btn-outline" style="font-size:11px;padding:3px 8px;"
+                                            onclick="assignEan('${v.sku}', this)">Assign EAN</button>`}
+                                </td>
+                                <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${v.title_full}">${v.title_full}</td>
+                                <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">${v.size_name || '—'}</td>
+                                <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;text-align:right;">${v.list_price ? '£' + parseFloat(v.list_price).toFixed(2) : '—'}</td>
+                                <td style="padding:6px 10px;border-bottom:1px solid #f1f5f9;">
+                                    <span class="status-badge status-${v.amazon_status}">${v.amazon_status}</span>
+                                </td>
+                            </tr>`).join('')}
+                        </tbody>
+                    </table>` : '<p style="color:#999;font-size:13px;margin:8px 0;">No variants yet.</p>';
+                el.style.display = 'block';
+                btn.textContent = 'Hide variants';
+            } catch(e) {
+                el.innerHTML = `<p style="color:#c53030;font-size:13px;">Error: ${e.message}</p>`;
+                el.style.display = 'block';
+                btn.textContent = 'Hide variants';
+            }
+        }
+
+        async function assignEan(sku, btn) {
+            btn.disabled = true;
+            btn.textContent = '…';
+            try {
+                const r = await fetch(`/api/catalogue/variants/${sku}/assign-ean`, { method: 'POST' });
+                const d = await r.json();
+                if (d.success) {
+                    btn.parentElement.innerHTML = `<span style="font-family:monospace;font-size:12px;">${d.ean}</span>`;
+                    // refresh pool count
+                    const pr = await fetch('/api/catalogue/ean-pool/status');
+                    const pd = await pr.json();
+                    document.getElementById('cat-ean-status').textContent = `EAN pool: ${pd.remaining} remaining`;
+                } else {
+                    alert('EAN assign failed: ' + d.error);
+                    btn.disabled = false;
+                    btn.textContent = 'Assign EAN';
+                }
+            } catch(e) {
+                alert('Error: ' + e.message);
+                btn.disabled = false;
+                btn.textContent = 'Assign EAN';
+            }
         }
 
         // ── Bug Report ────────────────────────────────────────────────────────

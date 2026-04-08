@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from config import SECRET_KEY, COLORS, BRAND_NAME, IMAGES_DIR
-from models import init_db, get_db, release_db, dict_cursor, Product, Blank, User, SalesImport, SalesData
+from models import init_db, get_db, release_db, dict_cursor, Product, Blank, User, SalesImport, SalesData, CatalogueListing, CatalogueVariant, EanPool
 from jobs import submit_job, get_job, get_all_jobs, job_to_dict, start_workers
 
 app = Flask(__name__)
@@ -2428,6 +2428,85 @@ def cairn_context():
         })
     finally:
         release_db(conn)
+
+
+# ── Catalogue routes ──────────────────────────────────────────────────────────
+
+@app.route('/catalogue/export/csv')
+def catalogue_export_csv():
+    """Download all catalogue variants as CSV."""
+    import csv
+    import io
+    variants = CatalogueVariant.all_for_export()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "sku", "ean", "title_full", "colour_name", "size_name",
+        "length_cm", "width_cm", "list_price", "amazon_status",
+        "amazon_asin", "amazon_published_at", "etsy_listing_id",
+        "ebay_listing_id", "image_urls",
+    ])
+    for v in variants:
+        image_urls = v.get("image_urls") or []
+        if isinstance(image_urls, str):
+            import json as _json
+            try:
+                image_urls = _json.loads(image_urls)
+            except Exception:
+                image_urls = [image_urls]
+        writer.writerow([
+            v.get("sku", ""),
+            v.get("ean", ""),
+            v.get("title_full", ""),
+            v.get("colour_name", ""),
+            v.get("size_name", ""),
+            v.get("length_cm", ""),
+            v.get("width_cm", ""),
+            v.get("list_price", ""),
+            v.get("amazon_status", ""),
+            v.get("amazon_asin", ""),
+            v.get("amazon_published_at", ""),
+            v.get("etsy_listing_id", ""),
+            v.get("ebay_listing_id", ""),
+            "|".join(image_urls),
+        ])
+
+    return Response(
+        output.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=render_catalogue.csv"},
+    )
+
+
+@app.route('/api/catalogue/listings', methods=['GET'])
+def catalogue_listings():
+    """List all catalogue listings with variant counts."""
+    return jsonify(CatalogueListing.all())
+
+
+@app.route('/api/catalogue/listings/<int:listing_id>/variants', methods=['GET'])
+def catalogue_variants(listing_id):
+    """List all variants for a listing."""
+    return jsonify(CatalogueVariant.for_listing(listing_id))
+
+
+@app.route('/api/catalogue/variants/<sku>/assign-ean', methods=['POST'])
+def assign_ean(sku):
+    """Atomically assign next available EAN from pool to a variant SKU."""
+    try:
+        ean = CatalogueVariant.assign_ean(sku)
+        return jsonify({"success": True, "ean": ean})
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/catalogue/ean-pool/status', methods=['GET'])
+def ean_pool_status():
+    """Return count of remaining unassigned EANs."""
+    return jsonify({"remaining": EanPool.remaining()})
 
 
 if __name__ == '__main__':
