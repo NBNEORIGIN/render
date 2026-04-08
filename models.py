@@ -44,6 +44,12 @@ def dict_cursor(conn):
     return conn.cursor(cursor_factory=RealDictCursor)
 
 
+def _commit(conn):
+    """Commit if autocommit is off (used inside transaction blocks)."""
+    if not conn.autocommit:
+        conn.commit()
+
+
 def _alter_add(cur, table: str, column: str, col_type: str) -> None:
     """Add a column if it doesn't exist; swallow duplicate-column errors only."""
     try:
@@ -300,6 +306,43 @@ def init_db():
           END IF;
         END$$
     """)
+
+    # ── render_etsy_listing_group ────────────────────────────────────────────
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS render_etsy_listing_group (
+            id                  SERIAL PRIMARY KEY,
+            parent_sku          VARCHAR(64) UNIQUE NOT NULL,
+            title               VARCHAR(140) NOT NULL,
+            description         TEXT NOT NULL,
+            taxonomy_id         INTEGER NOT NULL DEFAULT 2844,
+            shipping_profile_id BIGINT NOT NULL,
+            return_policy_id    BIGINT NOT NULL,
+            readiness_state_id  BIGINT DEFAULT 1402336022581,
+            who_made            VARCHAR(16) NOT NULL DEFAULT 'i_did',
+            when_made           VARCHAR(32) NOT NULL DEFAULT 'made_to_order',
+            is_supply           BOOLEAN NOT NULL DEFAULT FALSE,
+            option1_property    VARCHAR(64) NOT NULL DEFAULT 'size',
+            option2_property    VARCHAR(64) NOT NULL DEFAULT 'primary_color',
+            tags                JSONB NOT NULL DEFAULT '[]',
+            styles              JSONB NOT NULL DEFAULT '[]',
+            etsy_listing_id     BIGINT,
+            last_pushed_at      TIMESTAMPTZ,
+            last_push_status    VARCHAR(32) DEFAULT '',
+            last_push_error     TEXT DEFAULT '',
+            created_at          TIMESTAMPTZ DEFAULT NOW(),
+            updated_at          TIMESTAMPTZ DEFAULT NOW()
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_retsy_group_sku ON render_etsy_listing_group(parent_sku)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_retsy_group_lid ON render_etsy_listing_group(etsy_listing_id)")
+
+    # Add etsy group columns to render_products
+    for col, typ in [
+        ("etsy_group_id",      "INTEGER REFERENCES render_etsy_listing_group(id) ON DELETE SET NULL"),
+        ("etsy_option1_value", "VARCHAR(64)"),
+        ("etsy_option2_value", "VARCHAR(64)"),
+    ]:
+        _alter_add(cur, "render_products", col, typ)
 
     # ── render_spapi_log ─────────────────────────────────────────────────────
     cur.execute("""
@@ -985,6 +1028,145 @@ class EanPool:
         finally:
             release_db(conn)
         return {"inserted": inserted, "skipped": skipped, "invalid": invalid}
+
+
+class EtsyListingGroup:
+    """A product family pushed to Etsy as a single variation listing."""
+
+    @staticmethod
+    def all() -> list[dict]:
+        conn = get_db()
+        try:
+            cur = dict_cursor(conn)
+            cur.execute("""
+                SELECT g.*,
+                  (SELECT count(*) FROM render_products p WHERE p.etsy_group_id = g.id) AS variant_count
+                FROM render_etsy_listing_group g
+                ORDER BY g.parent_sku
+            """)
+            return [dict(r) for r in cur.fetchall()]
+        finally:
+            release_db(conn)
+
+    @staticmethod
+    def get(group_id: int) -> dict | None:
+        conn = get_db()
+        try:
+            cur = dict_cursor(conn)
+            cur.execute("SELECT * FROM render_etsy_listing_group WHERE id = %s", (group_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+        finally:
+            release_db(conn)
+
+    @staticmethod
+    def get_by_sku(parent_sku: str) -> dict | None:
+        conn = get_db()
+        try:
+            cur = dict_cursor(conn)
+            cur.execute(
+                "SELECT * FROM render_etsy_listing_group WHERE parent_sku = %s",
+                (parent_sku,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+        finally:
+            release_db(conn)
+
+    @staticmethod
+    def create(data: dict) -> int:
+        """Insert a new group row; return new id."""
+        import json
+        conn = get_db()
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO render_etsy_listing_group
+                    (parent_sku, title, description, taxonomy_id,
+                     shipping_profile_id, return_policy_id, readiness_state_id,
+                     who_made, when_made, is_supply,
+                     option1_property, option2_property, tags, styles)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING id
+            """, (
+                data["parent_sku"],
+                data["title"],
+                data["description"],
+                data.get("taxonomy_id", 2844),
+                data["shipping_profile_id"],
+                data["return_policy_id"],
+                data.get("readiness_state_id", 1402336022581),
+                data.get("who_made", "i_did"),
+                data.get("when_made", "made_to_order"),
+                data.get("is_supply", False),
+                data.get("option1_property", "size"),
+                data.get("option2_property", "primary_color"),
+                json.dumps(data.get("tags", [])),
+                json.dumps(data.get("styles", [])),
+            ))
+            new_id = cur.fetchone()[0]
+            _commit(conn)
+            return new_id
+        finally:
+            release_db(conn)
+
+    @staticmethod
+    def upsert(data: dict) -> int:
+        """Insert or update by parent_sku; return id."""
+        existing = EtsyListingGroup.get_by_sku(data["parent_sku"])
+        if existing:
+            return existing["id"]
+        return EtsyListingGroup.create(data)
+
+    @staticmethod
+    def set_push_result(group_id: int, listing_id: int | None, status: str, error: str = "") -> None:
+        conn = get_db()
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE render_etsy_listing_group
+                SET etsy_listing_id = %s,
+                    last_push_status = %s,
+                    last_push_error = %s,
+                    last_pushed_at = NOW(),
+                    updated_at = NOW()
+                WHERE id = %s
+            """, (listing_id, status, error, group_id))
+            _commit(conn)
+        finally:
+            release_db(conn)
+
+    @staticmethod
+    def variants(group_id: int) -> list[dict]:
+        """Return all render_products rows assigned to this group."""
+        conn = get_db()
+        try:
+            cur = dict_cursor(conn)
+            cur.execute(
+                "SELECT * FROM render_products WHERE etsy_group_id = %s ORDER BY m_number",
+                (group_id,),
+            )
+            return [dict(r) for r in cur.fetchall()]
+        finally:
+            release_db(conn)
+
+    @staticmethod
+    def assign_product(m_number: str, group_id: int, opt1_value: str, opt2_value: str = "") -> None:
+        """Assign a product to this group and set its variation option values."""
+        conn = get_db()
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE render_products
+                SET etsy_group_id = %s,
+                    etsy_option1_value = %s,
+                    etsy_option2_value = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE m_number = %s
+            """, (group_id, opt1_value, opt2_value, m_number))
+            _commit(conn)
+        finally:
+            release_db(conn)
 
 
 if __name__ == "__main__":
