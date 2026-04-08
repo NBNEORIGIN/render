@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from config import SECRET_KEY, COLORS, BRAND_NAME, IMAGES_DIR
-from models import init_db, get_db, release_db, dict_cursor, Product, Blank, User, SalesImport, SalesData, CatalogueListing, CatalogueVariant, EanPool
+from models import init_db, get_db, release_db, dict_cursor, Product, Blank, User, SalesImport, SalesData, CatalogueListing, CatalogueVariant, EanPool, EtsyListingGroup
 from jobs import submit_job, get_job, get_all_jobs, job_to_dict, start_workers
 
 app = Flask(__name__)
@@ -2270,12 +2270,17 @@ def etsy_publish():
     """Publish QA-approved products to Etsy as draft listings.
 
     Body: { "m_numbers": ["M1001", "M1002"] } or { "all_approved": true }
+
+    Products with an etsy_group_id are pushed as variation listings (one per group).
+    Products without a group are pushed as standalone drafts (legacy path).
     """
     from etsy_api import publish_products_to_etsy
+    from etsy_variation_push import push_listing_group
 
     data = request.json or {}
     m_numbers = data.get('m_numbers', [])
     all_approved = data.get('all_approved', False)
+    dry_run = data.get('dry_run', False)
 
     if all_approved:
         products = Product.approved()
@@ -2287,26 +2292,96 @@ def etsy_publish():
     if not products:
         return jsonify({"error": "No products found"}), 404
 
-    # Load AI content for each product
-    content_map = {}
-    conn = get_db()
-    try:
-        cur = dict_cursor(conn)
-        for p in products:
-            cur.execute(
-                "SELECT title, description, bullet_points, search_terms "
-                "FROM render_product_content WHERE product_id = %s "
-                "ORDER BY created_at DESC LIMIT 1",
-                (p['id'],)
-            )
-            row = cur.fetchone()
-            if row:
-                content_map[p['m_number']] = dict(row)
-    finally:
-        release_db(conn)
+    results = []
 
-    dry_run = data.get('dry_run', False)
-    results = publish_products_to_etsy(products, content_map, dry_run=dry_run)
+    # ── Split: grouped vs. standalone ──────────────────────────────────────
+    grouped_by_id: dict[int, list[dict]] = {}
+    standalone = []
+    for p in products:
+        gid = p.get("etsy_group_id")
+        if gid:
+            grouped_by_id.setdefault(gid, []).append(p)
+        else:
+            standalone.append(p)
+
+    # ── Push variation groups ───────────────────────────────────────────────
+    for group_id, variants in grouped_by_id.items():
+        group = EtsyListingGroup.get(group_id)
+        if not group:
+            for v in variants:
+                results.append({
+                    "m_number": v["m_number"],
+                    "listing_id": None,
+                    "status": "failed",
+                    "error": f"Group {group_id} not found in DB",
+                })
+            continue
+
+        # Skip if already pushed (idempotent unless force flag set)
+        if group.get("etsy_listing_id") and not data.get("force"):
+            listing_id = group["etsy_listing_id"]
+            for v in variants:
+                results.append({
+                    "m_number": v["m_number"],
+                    "listing_id": listing_id,
+                    "status": "skipped",
+                    "error": f"Already pushed as listing {listing_id}; use force=true to re-push",
+                })
+            continue
+
+        if dry_run:
+            for v in variants:
+                results.append({
+                    "m_number": v["m_number"],
+                    "listing_id": "DRY_RUN",
+                    "status": "dry_run",
+                    "error": None,
+                })
+            continue
+
+        push_result = push_listing_group(group, variants)
+        listing_id = push_result.get("listing_id")
+        success = push_result.get("success", False)
+        error = push_result.get("error", "")
+
+        EtsyListingGroup.set_push_result(
+            group_id,
+            listing_id,
+            "success" if success else "failed",
+            error,
+        )
+
+        status = "success" if success else "failed"
+        for v in variants:
+            results.append({
+                "m_number":   v["m_number"],
+                "listing_id": listing_id,
+                "status":     status,
+                "error":      error if not success else None,
+                "url": f"https://www.etsy.com/listing/{listing_id}" if listing_id else None,
+            })
+
+    # ── Push standalone (legacy per-SKU path) ──────────────────────────────
+    if standalone:
+        content_map = {}
+        conn = get_db()
+        try:
+            cur = dict_cursor(conn)
+            for p in standalone:
+                cur.execute(
+                    "SELECT title, description, bullet_points, search_terms "
+                    "FROM render_product_content WHERE product_id = %s "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (p['id'],)
+                )
+                row = cur.fetchone()
+                if row:
+                    content_map[p['m_number']] = dict(row)
+        finally:
+            release_db(conn)
+
+        solo_results = publish_products_to_etsy(standalone, content_map, dry_run=dry_run)
+        results.extend(solo_results)
 
     # Log publish results
     if not dry_run:
@@ -2317,8 +2392,8 @@ def etsy_publish():
 
     return jsonify({
         "published": published,
-        "failed": failed,
-        "results": results,
+        "failed":    failed,
+        "results":   results,
     })
 
 
@@ -2335,6 +2410,81 @@ def etsy_publish_status():
         return jsonify([dict(r) for r in cur.fetchall()])
     finally:
         release_db(conn)
+
+
+@app.route('/api/etsy/groups', methods=['GET'])
+def etsy_groups():
+    """List all Etsy listing groups with variant counts and push status."""
+    return jsonify(EtsyListingGroup.all())
+
+
+@app.route('/api/etsy/reconcile/<parent_sku>', methods=['POST'])
+def etsy_reconcile_group(parent_sku):
+    """Reconcile a group: delete existing orphan drafts, push as one variation listing.
+
+    Body: { "force": true } to re-push even if etsy_listing_id already set.
+    """
+    from etsy_api import EtsyListingManager
+    from etsy_auth import get_etsy_auth_from_env
+    from etsy_variation_push import push_listing_group
+
+    body = request.json or {}
+    force = body.get("force", False)
+
+    group = EtsyListingGroup.get_by_sku(parent_sku)
+    if not group:
+        return jsonify({"error": f"Group '{parent_sku}' not found"}), 404
+
+    variants = EtsyListingGroup.variants(group["id"])
+    if not variants:
+        return jsonify({"error": f"No variants assigned to group '{parent_sku}'"}), 400
+
+    # Idempotency guard
+    if group.get("etsy_listing_id") and not force:
+        return jsonify({
+            "skipped": True,
+            "listing_id": group["etsy_listing_id"],
+            "message": "Already pushed; pass force=true to re-push",
+        })
+
+    auth = get_etsy_auth_from_env()
+    manager = EtsyListingManager(auth)
+
+    # Delete existing orphan drafts for any variant m_number in this group
+    m_numbers = {v["m_number"] for v in variants}
+    deleted_ids = []
+    try:
+        drafts = manager.get_draft_listings(limit=100)
+        for listing in drafts.get("results", []):
+            lid = listing.get("listing_id")
+            # Check if any SKU in this listing matches our m_numbers
+            inv_sku = listing.get("sku") or ""
+            if inv_sku in m_numbers:
+                manager.delete_listing(lid)
+                deleted_ids.append(lid)
+                import logging
+                logging.getLogger(__name__).info(
+                    "Reconcile %s: deleted orphan draft %s", parent_sku, lid
+                )
+    except Exception as exc:
+        return jsonify({"error": f"Failed to fetch/delete drafts: {exc}"}), 500
+
+    # Push the group
+    result = push_listing_group(group, variants)
+    EtsyListingGroup.set_push_result(
+        group["id"],
+        result.get("listing_id"),
+        "success" if result["success"] else "failed",
+        result.get("error", ""),
+    )
+
+    return jsonify({
+        "success":        result["success"],
+        "listing_id":     result.get("listing_id"),
+        "variant_count":  result.get("variant_count", len(variants)),
+        "deleted_drafts": deleted_ids,
+        "error":          result.get("error"),
+    })
 
 
 @app.route('/api/phloe/publish', methods=['POST'])
