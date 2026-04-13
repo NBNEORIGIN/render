@@ -578,7 +578,7 @@
                                 <span class="channel-name">Amazon</span>
                             </div>
                             <div class="channel-actions">
-                                <button class="btn btn-primary" onclick="publishToAmazon()" id="btn-publish-amazon">Publish via API</button>
+                                <button class="btn btn-primary" onclick="publishAllToAmazon()" id="btn-publish-amazon">Publish via API</button>
                                 <button class="btn btn-warning" onclick="exportAmazonFlatfile()" id="btn-export-amazon">Generate Flatfile</button>
                                 <button class="btn btn-outline" onclick="downloadAmazonFlatfile()">Download Flatfile</button>
                             </div>
@@ -2770,7 +2770,7 @@ Use Cases: ${useCases}
             }
         }
         
-        async function publishToAmazon() {
+        async function publishAllToAmazon() {
             const btn = document.getElementById('btn-publish-amazon');
             const status = document.getElementById('export-all-status');
             const progress = document.getElementById('export-progress');
