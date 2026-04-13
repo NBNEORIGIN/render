@@ -2294,6 +2294,66 @@ def etsy_publish():
 
     results = []
 
+    # ── Auto-assign ungrouped products to variation groups by description ───
+    # Any product without etsy_group_id is automatically grouped with
+    # others sharing the same description and assigned option values.
+    from etsy_taxonomy_properties import size_display_from_slug, color_display_from_slug
+    from config import ETSY_SHIPPING_PROFILE_ID, ETSY_RETURN_POLICY_ID, ETSY_TAXONOMY_ID
+    import re as _re
+
+    def _make_parent_sku(description: str) -> str:
+        return _re.sub(r'[^A-Z0-9_]', '_', description.upper().replace(' ', '_'))[:60]
+
+    ungrouped = [p for p in products if not p.get("etsy_group_id")]
+    if ungrouped:
+        # Group by description
+        by_desc: dict[str, list[dict]] = {}
+        for p in ungrouped:
+            d = (p.get("description") or "sign").strip()
+            by_desc.setdefault(d, []).append(p)
+
+        for desc, desc_products in by_desc.items():
+            parent_sku = _make_parent_sku(desc)
+            # Ensure group exists
+            group_id = EtsyListingGroup.upsert({
+                "parent_sku":          parent_sku,
+                "title":               f"{desc} Sign – Brushed Aluminium, Weatherproof, Self-Adhesive",
+                "description": (
+                    f"<p><strong>{desc}</strong></p>"
+                    "<p>Premium quality brushed aluminium sign with UV-resistant printing. "
+                    "Self-adhesive backing — no tools required. Fully weatherproof.</p>"
+                    "<ul><li>Material: 1mm Brushed Aluminium</li>"
+                    "<li>Available in Silver, Gold, and White finishes</li>"
+                    "<li>5 sizes available</li>"
+                    "<li>Made in Great Britain</li></ul>"
+                ),
+                "taxonomy_id":         ETSY_TAXONOMY_ID,
+                "shipping_profile_id": ETSY_SHIPPING_PROFILE_ID,
+                "return_policy_id":    ETSY_RETURN_POLICY_ID,
+                "readiness_state_id":  1402336022581,
+                "who_made":            "i_did",
+                "when_made":           "made_to_order",
+                "is_supply":           False,
+                "option1_property":    "size",
+                "option2_property":    "primary_color",
+                "tags": [t[:20] for t in [
+                    desc.lower()[:20], "aluminium sign", "brushed aluminium",
+                    "weatherproof sign", "self adhesive", "office sign",
+                    "uk made", "made in britain", "professional sign",
+                ][:13]],
+                "styles": [],
+            })
+            # Assign products to group with option values
+            for p in desc_products:
+                size_slug  = (p.get("size")  or "saville").lower()
+                color_slug = (p.get("color") or "silver").lower()
+                EtsyListingGroup.assign_product(
+                    p["m_number"], group_id,
+                    size_display_from_slug(size_slug),
+                    color_display_from_slug(color_slug),
+                )
+                p["etsy_group_id"] = group_id  # update in-memory too
+
     # ── Split: grouped vs. standalone ──────────────────────────────────────
     grouped_by_id: dict[int, list[dict]] = {}
     standalone = []
@@ -2305,7 +2365,9 @@ def etsy_publish():
             standalone.append(p)
 
     # ── Push variation groups ───────────────────────────────────────────────
-    for group_id, variants in grouped_by_id.items():
+    for group_id, _variants_in_mem in grouped_by_id.items():
+        # Always re-fetch variants from DB to get current option values
+        variants = EtsyListingGroup.variants(group_id)
         group = EtsyListingGroup.get(group_id)
         if not group:
             for v in variants:

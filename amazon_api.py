@@ -246,6 +246,12 @@ def publish_listing(seller_id: str, listing: dict, variants: list, conn) -> dict
         results["parent"]["error_code"] = error_code
         return results  # abort — children require parent
 
+    # Wait for Amazon to process the parent before submitting children.
+    # SP-API is async (202 = accepted, not yet live). Without this delay
+    # Amazon creates children as standalone listings rather than linking them.
+    log.info("Parent accepted — waiting 8s for Amazon to process before submitting children")
+    time.sleep(8)
+
     # 2. PUT each child
     for variant in variants:
         sku = variant["sku"]
