@@ -2796,30 +2796,35 @@ Use Cases: ${useCases}
 
                 if (data.error) {
                     progress.innerHTML += `⚠ Amazon: ${data.error}<br>`;
-                    if (data.missing_ean) {
-                        progress.innerHTML += `&nbsp;&nbsp;Missing EANs: ${data.missing_ean.join(', ')}<br>`;
-                    }
                     status.textContent = `Amazon error: ${data.error}`;
                     status.style.color = 'var(--red)';
                     exportLog(`Amazon error: ${data.error}`, 'error');
                 } else {
-                    const parentOk = data.parent?.ok ? '✓' : '✗';
-                    const childrenOk = (data.children || []).filter(c => c.ok).length;
-                    const childrenTotal = (data.children || []).length;
-                    progress.innerHTML += `${parentOk} Parent SKU submitted<br>`;
-                    progress.innerHTML += `✓ ${childrenOk}/${childrenTotal} variants submitted<br>`;
-                    if (data.ean_auto_assigned > 0) {
-                        progress.innerHTML += `ℹ ${data.ean_auto_assigned} EAN(s) auto-assigned from pool<br>`;
-                    }
-                    progress.innerHTML += `ℹ ASINs will be assigned by Amazon — use "Poll ASINs" in the Catalogue tab to retrieve them.<br>`;
-                    status.textContent = `✓ Amazon: ${childrenOk}/${childrenTotal} variants submitted`;
-                    status.style.color = 'var(--green)';
-                    exportLog(`Amazon SP-API: parent ${parentOk}, ${childrenOk}/${childrenTotal} variants submitted`, 'success');
-
-                    (data.children || []).filter(c => !c.ok).forEach(c => {
-                        progress.innerHTML += `⚠ ${c.sku}: ${c.error_code || 'error'}<br>`;
-                        exportLog(`Amazon variant ${c.sku} failed: ${c.error_code}`, 'error');
+                    const listings = data.listings || [];
+                    let totalChildren = 0, totalOk = 0;
+                    listings.forEach(r => {
+                        if (r.error) {
+                            progress.innerHTML += `⚠ ${r.theme}: ${r.error}<br>`;
+                            exportLog(`Amazon ${r.theme} error: ${r.error}`, 'error');
+                            return;
+                        }
+                        const parentOk = r.parent?.ok ? '✓' : '✗';
+                        const childrenOk = (r.children || []).filter(c => c.status !== 'error').length;
+                        const childrenTotal = (r.children || []).length;
+                        totalChildren += childrenTotal;
+                        totalOk += childrenOk;
+                        progress.innerHTML += `${parentOk} <strong>${r.theme}</strong> — ${childrenOk}/${childrenTotal} variants<br>`;
+                        if (r.ean_auto_assigned > 0) {
+                            progress.innerHTML += `&nbsp;&nbsp;ℹ ${r.ean_auto_assigned} EAN(s) auto-assigned<br>`;
+                        }
+                        (r.children || []).filter(c => c.status === 'error').forEach(c => {
+                            progress.innerHTML += `&nbsp;&nbsp;⚠ ${c.sku}: ${c.error_code || 'error'}<br>`;
+                        });
+                        exportLog(`Amazon ${r.theme}: parent ${parentOk}, ${childrenOk}/${childrenTotal} variants`, 'success');
                     });
+                    progress.innerHTML += `ℹ ASINs will appear — use "Poll ASINs" in the Catalogue tab to retrieve them.<br>`;
+                    status.textContent = `✓ Amazon: ${listings.length} listings, ${totalOk}/${totalChildren} variants submitted`;
+                    status.style.color = 'var(--green)';
                 }
             } catch (e) {
                 const msg = e.name === 'AbortError' ? 'Request timed out' : e.message;
