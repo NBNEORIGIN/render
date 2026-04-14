@@ -19,7 +19,7 @@ app.secret_key = SECRET_KEY
 
 # ── Authentication ─────────────────────────────────────────────────────────────
 _PUBLIC_PATHS = {"/health", "/favicon.ico"}
-_PUBLIC_PREFIXES = ("/login", "/static/", "/images/", "/etsy/oauth/", "/ebay/oauth/")
+_PUBLIC_PREFIXES = ("/login", "/static/", "/images/", "/etsy/oauth/", "/ebay/oauth/", "/api/cairn/")
 
 LOGIN_HTML = """<!DOCTYPE html>
 <html><head><title>Render — Login</title>
@@ -2628,6 +2628,12 @@ def _log_publish_results(results: list[dict], channel: str):
 @app.route('/api/cairn/context')
 def cairn_context():
     """Expose Render state to Cairn business brain."""
+    api_key = request.headers.get('X-API-Key') or (
+        request.headers.get('Authorization', '').replace('Bearer ', '')
+    )
+    if api_key != os.environ.get('CAIRN_API_KEY', ''):
+        return jsonify({'error': 'Unauthorized'}), 401
+
     conn = get_db()
     try:
         cur = dict_cursor(conn)
