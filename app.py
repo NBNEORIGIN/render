@@ -1952,7 +1952,7 @@ def sales_performance():
         for k, v in sorted(cats.items(), key=lambda x: -x[1]['revenue'])
     ]
 
-    return jsonify({
+    resp = make_response(jsonify({
         'imports': imports,
         'top_performers': top[:50],
         'categories': categories,
@@ -1960,7 +1960,9 @@ def sales_performance():
             'revenue': sum(r['revenue'] or 0 for r in all_rows),
             'units':   sum(r['units'] or 0 for r in all_rows),
         }
-    })
+    }))
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
 
 
 @app.route('/api/sales/recommend', methods=['POST'])
@@ -2054,7 +2056,9 @@ Focus on:
 
 @app.route('/api/sales/imports')
 def list_imports():
-    return jsonify(SalesImport.list_all())
+    resp = make_response(jsonify(SalesImport.list_all()))
+    resp.headers['Cache-Control'] = 'no-store'
+    return resp
 
 
 @app.route('/api/bug-report', methods=['POST'])

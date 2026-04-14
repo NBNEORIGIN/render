@@ -3228,6 +3228,7 @@ Use Cases: ${useCases}
             if (res.ok) {
                 status.style.color = '#276749';
                 status.textContent = `✓ Imported ${data.rows} rows (import #${data.import_id})`;
+                document.getElementById('si-file').value = '';
                 loadInsights();
                 loadImportHistory();
             } else {
@@ -3237,7 +3238,7 @@ Use Cases: ${useCases}
         }
 
         async function loadImportHistory() {
-            const res = await fetch('/api/sales/imports');
+            const res = await fetch('/api/sales/imports', { cache: 'no-store' });
             const imports = await res.json();
             const el = document.getElementById('si-imports');
             if (!imports.length) { el.innerHTML = ''; return; }
@@ -3250,7 +3251,7 @@ Use Cases: ${useCases}
         }
 
         async function loadInsights() {
-            const res = await fetch('/api/sales/performance');
+            const res = await fetch('/api/sales/performance', { cache: 'no-store' });
             if (!res.ok) return;
             const d = await res.json();
 
