@@ -5,6 +5,7 @@ Mirrors ebay_api.py pattern. Rate limited to 5 QPS.
 """
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -21,6 +22,16 @@ from export_etsy import SIZE_CONFIG, COLOR_DISPLAY
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 ETSY_API_BASE = "https://api.etsy.com/v3"
+
+
+def _etsy_title_case(text: str) -> str:
+    """Convert text to title case safe for Etsy (no more than 3 words with 2+ consecutive caps)."""
+    return text.title()
+
+
+def _sanitise_tag(tag: str) -> str:
+    """Strip characters Etsy doesn't allow in tags (only letters, numbers, spaces)."""
+    return re.sub(r"[^a-zA-Z0-9 ]", "", tag).strip()
 
 # Rate limiting: 5 QPS
 _last_request_time = 0.0
@@ -86,10 +97,10 @@ class EtsyListingManager:
 
         # Use AI content if available, otherwise generate basic content
         if content and content.get("title"):
-            title = content["title"][:140]
+            title = _etsy_title_case(content["title"])[:140]
             desc_body = content.get("description", "")
         else:
-            title = f"{description_text} Sign - {size_info['display']} Brushed Aluminium, Weatherproof"
+            title = f"{_etsy_title_case(description_text)} Sign - {size_info['display']} Brushed Aluminium, Weatherproof"
             if len(title) > 140:
                 title = title[:137] + "..."
             desc_body = (
@@ -107,7 +118,8 @@ class EtsyListingManager:
             color_name.lower()[:20], "office", "weatherproof",
             "self adhesive", "uk", "property", "warning", "metal", "professional",
         ]
-        tags = [t[:20] for t in tags[:13]]
+        tags = [_sanitise_tag(t)[:20] for t in tags[:13]]
+        tags = [t for t in tags if t]  # drop empty after sanitisation
 
         listing_data = {
             "title": title,

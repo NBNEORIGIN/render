@@ -20,7 +20,7 @@ from typing import Optional
 
 from config import ETSY_SHOP_ID, ETSY_TAXONOMY_ID, IMAGES_DIR
 from etsy_auth import get_etsy_auth_from_env
-from etsy_api import EtsyListingManager
+from etsy_api import EtsyListingManager, _etsy_title_case, _sanitise_tag
 from etsy_taxonomy_properties import (
     resolve_property_id,
     resolve_value_ids,
@@ -482,7 +482,7 @@ def _build_draft_listing_payload(group: dict, variants: list[dict]) -> dict:
         tags = json.loads(tags)
 
     return {
-        "title":                group["title"],
+        "title":                _etsy_title_case(group["title"]),
         "description":          group["description"],
         "price":                min_price,
         "quantity":             999,  # overwritten by inventory PUT
@@ -493,7 +493,7 @@ def _build_draft_listing_payload(group: dict, variants: list[dict]) -> dict:
         "shipping_profile_id":  group["shipping_profile_id"],
         "return_policy_id":     group["return_policy_id"],
         "readiness_state_id":   group.get("readiness_state_id") or 1402336022581,
-        "tags":                 [t[:20] for t in tags[:13]],
+        "tags":                 [t for t in [_sanitise_tag(t)[:20] for t in tags[:13]] if t],
         "materials":            ["brushed aluminium"],
         "type":                 "physical",
         "state":                "draft",
