@@ -844,6 +844,7 @@
     </div>
     
     <script>
+        const CURRENT_USER = "{{ session.get('user_email','') }}";
         let products = [];
         let chatHistory = [];
         
@@ -1181,19 +1182,26 @@
             // Group products by size and description to show variants together
             // Order: saville, dracula first (top row), then baby_jesus, dick (bottom row)
             const sizeOrder = ['saville', 'dracula', 'barzan', 'baby_jesus', 'dick'];
-            // Dedupe by (size, description) so the QA grid shows ONE silver card
-            // per design + size combination, even if duplicate rows exist across
-            // different owner_email values.
-            const seenKey = new Set();
-            const silverProducts = products
-                .filter(p => p.color === 'silver')
-                .sort((a, b) => sizeOrder.indexOf(a.size) - sizeOrder.indexOf(b.size))
-                .filter(p => {
-                    const k = `${p.size}|${p.description || ''}`;
-                    if (seenKey.has(k)) return false;
-                    seenKey.add(k);
-                    return true;
-                });
+            // Show ONE silver card per size — at most 5 cards total.
+            // Tie-break: prefer a product owned by the current logged-in user;
+            // otherwise pick the most-recently-created silver row for that size.
+            const bySize = new Map();
+            for (const p of products) {
+                if (p.color !== 'silver') continue;
+                const current = bySize.get(p.size);
+                if (!current) { bySize.set(p.size, p); continue; }
+                const pIsMine = p.owner_email === CURRENT_USER;
+                const cIsMine = current.owner_email === CURRENT_USER;
+                if (pIsMine && !cIsMine) { bySize.set(p.size, p); continue; }
+                if (!pIsMine && cIsMine) continue;
+                // Both mine or both not — pick the newer one by created_at.
+                if ((p.created_at || '') > (current.created_at || '')) {
+                    bySize.set(p.size, p);
+                }
+            }
+            const silverProducts = sizeOrder
+                .map(size => bySize.get(size))
+                .filter(Boolean);
             
             grid.innerHTML = silverProducts.map(p => {
                 // Find gold and white variants
