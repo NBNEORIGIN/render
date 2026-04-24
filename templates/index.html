@@ -2543,9 +2543,14 @@ Use Cases: ${useCases}
             container.innerHTML = '<p style="color: #888;">Loading image previews...</p>';
             
             try {
-                const resp = await fetch('/api/products');
+                // Scope to the current user's products so preview titles
+                // match the images the user actually uploaded. Without this,
+                // rows from other staff appear with their own descriptions
+                // while the shared icon assets render the current user's
+                // most recent upload — leaving title and image out of sync.
+                const resp = await fetch('/api/products?scope=mine');
                 const products = await resp.json();
-                
+
                 if (!products || products.length === 0) {
                     container.innerHTML = '<p style="color: #888;">No products found.</p>';
                     return;
