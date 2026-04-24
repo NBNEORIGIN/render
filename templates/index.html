@@ -1456,7 +1456,8 @@
                 }
                 const headers = parseCsvLine(lines[0]).map(h => h.toLowerCase().replace(/[^a-z0-9_]/g, '_'));
 
-                let imported = 0, skipped = 0;
+                let imported = 0, updated = 0, skipped = 0;
+                const reasons = [];
                 for (let i = 1; i < lines.length; i++) {
                     if (!lines[i].trim()) continue;
                     const values = parseCsvLine(lines[i]);
@@ -1466,18 +1467,38 @@
                         if (values[idx] !== undefined && values[idx] !== '') product[h] = values[idx];
                     });
 
-                    if (!product.m_number) { skipped++; continue; }
+                    if (!product.m_number) {
+                        skipped++;
+                        if (reasons.length < 10) reasons.push(`Row ${i}: missing m_number`);
+                        continue;
+                    }
 
                     const resp = await fetch('/api/products', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify(product)
                     });
-                    if (resp.ok || resp.status === 409) imported++;
-                    else skipped++;
+                    if (resp.ok) {
+                        const body = await resp.json().catch(() => ({}));
+                        if (body.updated) updated++; else imported++;
+                    } else {
+                        skipped++;
+                        let reason = `HTTP ${resp.status}`;
+                        try {
+                            const body = await resp.json();
+                            if (body.error) reason = body.error;
+                        } catch (_) {}
+                        if (reasons.length < 10) reasons.push(`${product.m_number}: ${reason}`);
+                    }
                 }
 
-                status.innerHTML += `<span style="color: #0f0;">✅ Imported ${imported} products from ${file.name}${skipped ? ` (${skipped} skipped)` : ''}</span><br>`;
+                let summary = `✅ ${file.name}: ${imported} new`;
+                if (updated) summary += `, ${updated} updated`;
+                if (skipped) summary += `, ${skipped} skipped`;
+                status.innerHTML += `<span style="color: #0f0;">${summary}</span><br>`;
+                if (reasons.length) {
+                    status.innerHTML += `<span style="color: #f80; font-size: 11px;">${reasons.join('<br>')}</span><br>`;
+                }
                 loadProducts();
             } catch (e) {
                 status.innerHTML += `<span style="color: red;">❌ Error importing ${file.name}: ${e.message}</span><br>`;

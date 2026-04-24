@@ -132,6 +132,21 @@ def get_products():
 def create_product():
     data = request.json
     data["owner_email"] = session.get("user_email")
+
+    # If the M-number already exists, upsert it for the current owner
+    # and return 409 with a clear message for cross-owner conflicts.
+    m_number = data.get("m_number")
+    if m_number:
+        existing = Product.get(m_number)
+        if existing:
+            if existing.get("owner_email") == data["owner_email"]:
+                Product.update(m_number, data)
+                return jsonify({"success": True, "updated": True})
+            return jsonify({
+                "error": f"M-number {m_number} already exists and is owned by another user.",
+                "owner_email": existing.get("owner_email"),
+            }), 409
+
     Product.create(data)
     return jsonify({"success": True})
 
