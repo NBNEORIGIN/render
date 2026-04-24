@@ -82,6 +82,24 @@ def logout():
     session.clear()
     return redirect(url_for("login_page"))
 
+@app.route("/api/users/change-password", methods=["POST"])
+def change_password():
+    """Allow the currently logged-in user to change their own password."""
+    from werkzeug.security import check_password_hash
+    data = request.json or {}
+    current = data.get("current", "")
+    new_pw = data.get("new_password", "").strip()
+    if not current or not new_pw:
+        return jsonify({"error": "current and new_password required"}), 400
+    if len(new_pw) < 6:
+        return jsonify({"error": "Password must be at least 6 characters"}), 400
+    email = session.get("user_email")
+    user = User.authenticate(email, current)
+    if not user:
+        return jsonify({"error": "Current password is incorrect"}), 403
+    User.set_password(email, new_pw)
+    return jsonify({"ok": True})
+
 @app.route("/health")
 def health():
     return jsonify({"status": "ok"})
@@ -2068,11 +2086,9 @@ def list_imports():
 
 @app.route('/api/bug-report', methods=['POST'])
 def bug_report():
-    """Send a bug report email to the team."""
-    import smtplib
-    from email.mime.text import MIMEText
-    from email.mime.multipart import MIMEMultipart
-    from config import SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, BUG_REPORT_RECIPIENTS
+    """Send a bug report email via Postmark."""
+    import requests as _req
+    from config import BUG_REPORT_RECIPIENTS
 
     data = request.json or {}
     name = data.get('name', 'Unknown').strip() or 'Unknown'
@@ -2092,17 +2108,24 @@ While doing: {context or '(not specified)'}
 {description}
 """
 
-    msg = MIMEMultipart()
-    msg['From'] = SMTP_USER
-    msg['To'] = ', '.join(BUG_REPORT_RECIPIENTS)
-    msg['Subject'] = f'[Render] Bug report from {name}'
-    msg.attach(MIMEText(body, 'plain'))
-
+    POSTMARK_TOKEN = "95c8b0bd-c8b0-45be-837a-c4ff1945ebed"
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
-            s.starttls()
-            s.login(SMTP_USER, SMTP_PASSWORD)
-            s.sendmail(SMTP_USER, BUG_REPORT_RECIPIENTS, msg.as_string())
+        resp = _req.post(
+            "https://api.postmarkapp.com/email",
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "X-Postmark-Server-Token": POSTMARK_TOKEN,
+            },
+            json={
+                "From": "bookings@phloe.co.uk",
+                "To": ", ".join(BUG_REPORT_RECIPIENTS),
+                "Subject": f"[Render] Bug report from {name}",
+                "TextBody": body,
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
         return jsonify({"ok": True})
     except Exception as e:
         app.logger.error("Bug report email failed: %s", e)

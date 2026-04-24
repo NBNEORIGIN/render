@@ -256,7 +256,12 @@
             <h1>Render</h1>
             <p>Signage Product Generator &amp; Publisher</p>
         </div>
-        <button onclick="openBugReport()" style="margin-left:auto;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:#94a3b8;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;">Report a Bug</button>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:10px;">
+            <span style="font-size:12px;color:#94a3b8;">{{ session.get('user_name','') }}</span>
+            <button onclick="openBugReport()" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:#94a3b8;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;">Report a Bug</button>
+            <button onclick="openChangePassword()" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);color:#94a3b8;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;">Change Password</button>
+            <a href="/logout" style="background:rgba(220,38,38,0.15);border:1px solid rgba(220,38,38,0.3);color:#fca5a5;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:12px;font-weight:500;text-decoration:none;">Sign Out</a>
+        </div>
     </div>
 
     <!-- Bug Report Modal -->
@@ -277,7 +282,45 @@
             </div>
         </div>
     </div>
-    
+
+    <!-- Change Password Modal -->
+    <div id="pw-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center;">
+        <div style="background:#fff;border-radius:10px;padding:32px;width:420px;max-width:95vw;">
+            <h2 style="margin:0 0 6px;">🔑 Change Password</h2>
+            <p style="color:#666;font-size:13px;margin-bottom:20px;">Enter your current password then choose a new one.</p>
+
+            <label style="font-size:13px;font-weight:600;display:block;margin-bottom:4px;">Current password</label>
+            <div style="position:relative;margin-bottom:12px;">
+                <input id="pw-current" type="password" style="width:100%;padding:8px 36px 8px 8px;border:1px solid #ccc;border-radius:5px;font-size:14px;" placeholder="Your current password">
+                <button type="button" onclick="togglePw('pw-current','eye-current')" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#666;padding:0;line-height:1;" title="Show/hide">
+                    <svg id="eye-current" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+            </div>
+
+            <label style="font-size:13px;font-weight:600;display:block;margin-bottom:4px;">New password</label>
+            <div style="position:relative;margin-bottom:12px;">
+                <input id="pw-new" type="password" style="width:100%;padding:8px 36px 8px 8px;border:1px solid #ccc;border-radius:5px;font-size:14px;" placeholder="At least 6 characters">
+                <button type="button" onclick="togglePw('pw-new','eye-new')" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#666;padding:0;line-height:1;" title="Show/hide">
+                    <svg id="eye-new" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+            </div>
+
+            <label style="font-size:13px;font-weight:600;display:block;margin-bottom:4px;">Confirm new password</label>
+            <div style="position:relative;margin-bottom:20px;">
+                <input id="pw-confirm" type="password" style="width:100%;padding:8px 36px 8px 8px;border:1px solid #ccc;border-radius:5px;font-size:14px;" placeholder="Repeat new password">
+                <button type="button" onclick="togglePw('pw-confirm','eye-confirm')" style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:#666;padding:0;line-height:1;" title="Show/hide">
+                    <svg id="eye-confirm" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+            </div>
+
+            <div id="pw-status" style="margin-bottom:12px;font-size:13px;display:none;"></div>
+            <div style="display:flex;gap:10px;justify-content:flex-end;">
+                <button onclick="closeChangePassword()" style="padding:8px 18px;border:1px solid #ccc;background:#fff;border-radius:5px;cursor:pointer;">Cancel</button>
+                <button onclick="submitChangePassword()" style="padding:8px 18px;background:#2563eb;color:#fff;border:none;border-radius:5px;cursor:pointer;font-weight:600;">Update Password</button>
+            </div>
+        </div>
+    </div>
+
     <div class="container">
         <!-- AI Assistant Chat -->
         <div class="card" style="margin-bottom: 20px;">
@@ -410,7 +453,6 @@
             <div class="card">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
                     <h2 style="margin:0;">QA Review</h2>
-                    <span style="font-size:12px;background:var(--bg);border:1px solid var(--border);border-radius:20px;padding:3px 12px;color:var(--muted);">All staff — shared view</span>
                 </div>
                 <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 15px;">
                     <button class="btn btn-secondary" onclick="loadQAProducts()">↻ Refresh</button>
@@ -1149,16 +1191,12 @@
                 const whiteVariant = products.find(v => v.size === p.size && v.description === p.description && v.color === 'white');
                 const showOrientationToggle = p.size === 'dick' || p.size === 'baby_jesus';
                 
-                const ownerLabel = p.owner_email ? p.owner_email.split('@')[0] : '—';
                 return `
                 <div class="product-card">
                     <!-- Header with title -->
-                    <div style="padding: 10px 15px; background: #1e293b; color: white; display:flex; align-items:center; justify-content:space-between;">
-                        <div>
-                            <h3 style="margin: 0; font-size: 14px;">${p.description || p.m_number}</h3>
-                            <span style="font-size: 11px; opacity: 0.7;">${p.size}${showOrientationToggle ? ` · ${p.orientation || 'landscape'}` : ''}</span>
-                        </div>
-                        <span style="font-size:10px;background:rgba(255,255,255,0.15);padding:2px 8px;border-radius:10px;">${ownerLabel}</span>
+                    <div style="padding: 10px 15px; background: #1e293b; color: white;">
+                        <h3 style="margin: 0; font-size: 14px;">${p.description || p.m_number}</h3>
+                        <span style="font-size: 11px; opacity: 0.7;">${p.size}${showOrientationToggle ? ` · ${p.orientation || 'landscape'}` : ''}</span>
                     </div>
                     
                     <!-- Large Silver Preview -->
@@ -3666,6 +3704,72 @@ Use Cases: ${useCases}
         }
         document.getElementById('bug-modal').addEventListener('click', function(e) {
             if (e.target === this) closeBugReport();
+        });
+
+        // ── Change Password modal ────────────────────────────────────────
+        function togglePw(inputId, iconId) {
+            const input = document.getElementById(inputId);
+            const icon = document.getElementById(iconId);
+            if (input.type === 'password') {
+                input.type = 'text';
+                // slash through eye
+                icon.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19M1 1l22 22"/><circle cx="12" cy="12" r="3"/>';
+            } else {
+                input.type = 'password';
+                icon.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+            }
+        }
+        function openChangePassword() {
+            const m = document.getElementById('pw-modal');
+            m.style.display = 'flex';
+            document.getElementById('pw-current').value = '';
+            document.getElementById('pw-new').value = '';
+            document.getElementById('pw-confirm').value = '';
+            document.getElementById('pw-status').style.display = 'none';
+        }
+        function closeChangePassword() {
+            document.getElementById('pw-modal').style.display = 'none';
+        }
+        async function submitChangePassword() {
+            const current = document.getElementById('pw-current').value;
+            const newPw = document.getElementById('pw-new').value;
+            const confirm = document.getElementById('pw-confirm').value;
+            const status = document.getElementById('pw-status');
+            status.style.display = 'block';
+            if (!current || !newPw || !confirm) {
+                status.style.color = '#c53030';
+                status.textContent = 'Please fill in all fields.';
+                return;
+            }
+            if (newPw !== confirm) {
+                status.style.color = '#c53030';
+                status.textContent = 'New passwords do not match.';
+                return;
+            }
+            if (newPw.length < 6) {
+                status.style.color = '#c53030';
+                status.textContent = 'Password must be at least 6 characters.';
+                return;
+            }
+            status.style.color = '#555';
+            status.textContent = 'Updating…';
+            const res = await fetch('/api/users/change-password', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({current, new_password: newPw})
+            });
+            const data = await res.json();
+            if (res.ok) {
+                status.style.color = '#276749';
+                status.textContent = '✓ Password updated successfully.';
+                setTimeout(closeChangePassword, 1800);
+            } else {
+                status.style.color = '#c53030';
+                status.textContent = data.error || 'Failed to update password.';
+            }
+        }
+        document.getElementById('pw-modal').addEventListener('click', function(e) {
+            if (e.target === this) closeChangePassword();
         });
     </script>
 </body>

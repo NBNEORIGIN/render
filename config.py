@@ -19,6 +19,8 @@ DEFAULT_USERS = {
     "sanna@nbnesigns.com": "Sanna",
     "ivan@nbnesigns.com": "Ivan",
     "ben@nbnesigns.com": "Ben",
+    "jo@nbnesigns.com": "Jo",
+    "nyo@nbnesigns.com": "Nyo",
 }
 DEFAULT_PASSWORD = "!49Monkswood"
 

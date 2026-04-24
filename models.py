@@ -405,23 +405,21 @@ def _seed_blanks():
 
 
 def _seed_users():
-    """Populate render_users with the default NBNE team if empty."""
+    """Ensure every default NBNE staff member exists in render_users (idempotent)."""
     from werkzeug.security import generate_password_hash
-    from config import DEFAULT_USERS
+    from config import DEFAULT_USERS, DEFAULT_PASSWORD
 
     conn = get_db()
     try:
-        cur = dict_cursor(conn)
-        cur.execute("SELECT COUNT(*) as n FROM render_users")
-        if dict(cur.fetchone())["n"] > 0:
-            return
-        cur2 = conn.cursor()
+        cur = conn.cursor()
         for email, name in DEFAULT_USERS.items():
-            from config import DEFAULT_PASSWORD
-            cur2.execute(
-                "INSERT INTO render_users (email, name, password_hash) VALUES (%s,%s,%s)",
-                (email, name, generate_password_hash(DEFAULT_PASSWORD)),
+            cur.execute(
+                """INSERT INTO render_users (email, name, password_hash)
+                   VALUES (%s, %s, %s)
+                   ON CONFLICT (email) DO NOTHING""",
+                (email.lower().strip(), name, generate_password_hash(DEFAULT_PASSWORD)),
             )
+        _commit(conn)
     finally:
         release_db(conn)
 
