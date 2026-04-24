@@ -103,12 +103,17 @@ def index():
 
 @app.route('/api/products', methods=['GET'])
 def get_products():
+    # ?scope=mine  → current user's products only (Products tab)
+    # no param     → all products (QA tab, export)
+    if request.args.get("scope") == "mine":
+        return jsonify(Product.all(owner_email=session.get("user_email")))
     return jsonify(Product.all())
 
 
 @app.route('/api/products', methods=['POST'])
 def create_product():
     data = request.json
+    data["owner_email"] = session.get("user_email")
     Product.create(data)
     return jsonify({"success": True})
 
@@ -147,8 +152,8 @@ def delete_product(m_number):
 
 @app.route('/api/products/clear', methods=['DELETE'])
 def clear_all_products():
-    """Delete all products."""
-    Product.clear_all()
+    """Delete current user's products only."""
+    Product.clear_all(owner_email=session.get("user_email"))
     return jsonify({"success": True})
 
 

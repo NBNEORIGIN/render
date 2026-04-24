@@ -122,7 +122,8 @@ def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    for col, typ in [("ai_theme", "TEXT"), ("ai_use_cases", "TEXT"), ("ai_content", "TEXT")]:
+    for col, typ in [("ai_theme", "TEXT"), ("ai_use_cases", "TEXT"), ("ai_content", "TEXT"),
+                     ("owner_email", "TEXT")]:
         _alter_add(cur, "render_products", col, typ)
 
     # ── render_product_content ───────────────────────────────────────────────
@@ -619,11 +620,14 @@ class Product:
         return d
 
     @staticmethod
-    def all():
+    def all(owner_email: str = None):
         conn = get_db()
         try:
             cur = dict_cursor(conn)
-            cur.execute("SELECT * FROM render_products ORDER BY m_number")
+            if owner_email:
+                cur.execute("SELECT * FROM render_products WHERE owner_email = %s ORDER BY m_number", (owner_email,))
+            else:
+                cur.execute("SELECT * FROM render_products ORDER BY m_number")
             return [Product._ensure_ean_string(dict(r)) for r in cur.fetchall()]
         finally:
             release_db(conn)
@@ -658,8 +662,8 @@ class Product:
                 INSERT INTO render_products (m_number, description, size, color, layout_mode,
                     icon_files, text_line_1, text_line_2, text_line_3, orientation,
                     font, material, mounting_type, ean, qa_status,
-                    icon_scale, text_scale, icon_offset_x, icon_offset_y)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                    icon_scale, text_scale, icon_offset_x, icon_offset_y, owner_email)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """, (
                 data.get("m_number"), data.get("description"), data.get("size"),
                 data.get("color"), data.get("layout_mode", "A"), data.get("icon_files"),
@@ -669,6 +673,7 @@ class Product:
                 data.get("ean"), data.get("qa_status", "pending"),
                 data.get("icon_scale", 1.0), data.get("text_scale", 1.0),
                 data.get("icon_offset_x", 0.0), data.get("icon_offset_y", 0.0),
+                data.get("owner_email"),
             ))
             _commit(conn)
         finally:
@@ -707,11 +712,14 @@ class Product:
             release_db(conn)
 
     @staticmethod
-    def clear_all():
+    def clear_all(owner_email: str = None):
         conn = get_db()
         try:
             cur = conn.cursor()
-            cur.execute("DELETE FROM render_products")
+            if owner_email:
+                cur.execute("DELETE FROM render_products WHERE owner_email = %s", (owner_email,))
+            else:
+                cur.execute("DELETE FROM render_products")
             _commit(conn)
         finally:
             release_db(conn)
