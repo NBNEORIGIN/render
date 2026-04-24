@@ -138,8 +138,12 @@ ssh root@178.104.1.152
 cd /opt/nbne/render/app && git pull origin main
 docker cp app.py render-app-1:/app/app.py
 docker cp templates/index.html render-app-1:/app/templates/index.html
-# Find the gunicorn master PID and reload it:
-kill -HUP $(docker top render-app-1 | grep 'gunicorn app:app' | awk 'NR==1{print $2}')
+# Reload the gunicorn master so the new files take effect.
+# NOTE: `docker top` lists the `/bin/sh -c gunicorn ...` wrapper process first.
+# Match on `python.*gunicorn app:app` to target the real master — HUP'ing the
+# shell wrapper does nothing, workers keep serving the cached templates, and
+# the deploy silently fails.
+kill -HUP $(docker top render-app-1 | awk '/python.*gunicorn app:app/ {print $2; exit}')
 curl http://localhost:8025/health   # should return {"status":"ok"}
 ```
 
