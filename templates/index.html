@@ -1193,10 +1193,13 @@
                 
                 return `
                 <div class="product-card">
-                    <!-- Header with title -->
-                    <div style="padding: 10px 15px; background: #1e293b; color: white;">
-                        <h3 style="margin: 0; font-size: 14px;">${p.description || p.m_number}</h3>
-                        <span style="font-size: 11px; opacity: 0.7;">${p.size}${showOrientationToggle ? ` · ${p.orientation || 'landscape'}` : ''}</span>
+                    <!-- Header with title + delete button -->
+                    <div style="padding: 10px 15px; background: #1e293b; color: white; display:flex; align-items:center; justify-content:space-between;">
+                        <div>
+                            <h3 style="margin: 0; font-size: 14px;">${p.description || p.m_number}</h3>
+                            <span style="font-size: 11px; opacity: 0.7;">${p.size}${showOrientationToggle ? ` · ${p.orientation || 'landscape'}` : ''}</span>
+                        </div>
+                        <button onclick="deleteQAFamily('${p.description}','${p.size}')" title="Delete this product family from QA" style="background:rgba(220,38,38,0.25);border:1px solid rgba(220,38,38,0.4);color:#fca5a5;padding:4px 8px;border-radius:5px;cursor:pointer;font-size:11px;flex-shrink:0;">🗑 Delete</button>
                     </div>
                     
                     <!-- Large Silver Preview -->
@@ -1283,6 +1286,18 @@
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({qa_status: status})
             });
+            loadQAProducts();
+        }
+
+        async function deleteQAFamily(description, size) {
+            // Delete all colour variants (silver/gold/white) for this description+size combination
+            const toDelete = products.filter(p => p.description === description && p.size === size);
+            if (!toDelete.length) return;
+            if (!confirm(`Delete ${toDelete.length} product(s) for "${description}" (${size})? This cannot be undone.`)) return;
+            for (const p of toDelete) {
+                await fetch(`/api/products/${p.m_number}`, { method: 'DELETE' });
+            }
+            debugLog(`Deleted ${toDelete.length} product(s): ${description} ${size}`, 'success');
             loadQAProducts();
         }
         
