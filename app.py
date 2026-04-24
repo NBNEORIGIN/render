@@ -1015,8 +1015,8 @@ def flatfile_preview():
     """Return Amazon flatfile data as JSON for preview table."""
     import os
     from config import PUBLIC_BASE_URL
-    
-    all_products = Product.all()
+
+    all_products = Product.all(owner_email=session.get("user_email"))
     if not all_products:
         return jsonify({"success": False, "error": "No products found"}), 400
     
@@ -1123,8 +1123,8 @@ def download_amazon_flatfile():
     data = request.json or {}
     theme = data.get('theme', '')
     use_cases = data.get('use_cases', '')
-    
-    all_products = Product.all()
+
+    all_products = Product.all(owner_email=session.get("user_email"))
     if not all_products:
         return jsonify({"success": False, "error": "No products found"}), 400
     
@@ -1586,9 +1586,10 @@ def export_m_folders_json():
     from io import BytesIO
     from export_images import generate_m_number_folder_zip
 
-    products = Product.approved()
+    email = session.get("user_email")
+    products = [p for p in Product.approved() if p.get("owner_email") == email]
     if not products:
-        products = Product.all()
+        products = Product.all(owner_email=email)
 
     if not products:
         return jsonify({"success": False, "error": "No products found"}), 400
@@ -1617,7 +1618,7 @@ def save_product_images():
     from PIL import Image
     from image_generator import generate_product_image
 
-    products = Product.all()
+    products = Product.all(owner_email=session.get("user_email"))
     if not products:
         return jsonify({"success": False, "error": "No products found"}), 400
 
@@ -1722,11 +1723,12 @@ def export_all_images():
     """Download all product images as ZIP (approved products)."""
     from export_images import generate_images_zip
     from io import BytesIO
-    
-    products = Product.approved()
+
+    email = session.get("user_email")
+    products = [p for p in Product.approved() if p.get("owner_email") == email]
     if not products:
-        products = Product.all()
-    
+        products = Product.all(owner_email=email)
+
     if not products:
         return jsonify({"error": "No products to export"}), 400
     
